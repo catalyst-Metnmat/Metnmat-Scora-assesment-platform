@@ -40,9 +40,10 @@ function fileDriver() {
     fs.renameSync(tmp, file);
   };
 
-  let db = loadJson(DB_FILE, { cycles: [], submissions: [] });
+  let db = loadJson(DB_FILE, { cycles: [], submissions: [], drafts: [] });
   if (!Array.isArray(db.cycles)) db.cycles = [];
   if (!Array.isArray(db.submissions)) db.submissions = [];
+  if (!Array.isArray(db.drafts)) db.drafts = [];
 
   let framework = loadJson(FW_FILE, null);
   let config = loadJson(CFG_FILE, {});
@@ -96,6 +97,12 @@ function fileDriver() {
       try { return fs.readFileSync(AUDIT_FILE, 'utf8').trim().split('\n').slice(-limit).reverse().map(l => JSON.parse(l)); }
       catch { return []; }
     },
+    // ---- employee session drafts ----
+    async listDrafts(cycleId) { return (cycleId ? db.drafts.filter(d => d.cycleId === cycleId) : db.drafts).map(d => JSON.parse(JSON.stringify(d))); },
+    async getDraftByToken(token) { const d = db.drafts.find(x => x.token === token); return d ? JSON.parse(JSON.stringify(d)) : null; },
+    async getDraftByEmployee(cycleId, eid) { const d = db.drafts.find(x => x.cycleId === cycleId && x.employeeId === eid); return d ? JSON.parse(JSON.stringify(d)) : null; },
+    async upsertDraft(draft) { const i = db.drafts.findIndex(x => x.id === draft.id); if (i >= 0) db.drafts[i] = draft; else db.drafts.push(draft); saveDb(); },
+    async deleteDraft(id) { const i = db.drafts.findIndex(x => x.id === id); if (i >= 0) db.drafts.splice(i, 1); saveDb(); },
     _backupTarget() { return { db, dir: DATA_DIR }; }
   };
 }
@@ -133,6 +140,8 @@ function mongoDriver(uri) {
       if (changed) await meta.updateOne({ _id: 'secrets' }, { $set: { _id: 'secrets', value: secrets } }, { upsert: true });
       await (await col('submissions')).createIndex({ cycleId: 1 });
       await (await col('audit')).createIndex({ ts: -1 });
+      await (await col('drafts')).createIndex({ token: 1 });
+      await (await col('drafts')).createIndex({ cycleId: 1, employeeId: 1 });
     },
     async getSecrets() {
       const meta = await col('meta');
@@ -172,6 +181,12 @@ function mongoDriver(uri) {
     async deleteSubmission(id) { const s = await this.getSubmission(id); if (s) await (await col('submissions')).deleteOne({ _id: id }); return s; },
     async appendAudit(entry) { try { await (await col('audit')).insertOne(entry); } catch {} },
     async listAudit(limit = 100) { return (await (await col('audit')).find({}).sort({ ts: -1 }).limit(limit).toArray()).map(({ _id, ...e }) => e); },
+    // ---- employee session drafts ----
+    async listDrafts(cycleId) { const q = cycleId ? { cycleId } : {}; return (await (await col('drafts')).find(q).toArray()).map(({ _id, ...d }) => d); },
+    async getDraftByToken(token) { const d = await (await col('drafts')).findOne({ token }); if (!d) return null; const { _id, ...rest } = d; return rest; },
+    async getDraftByEmployee(cycleId, eid) { const d = await (await col('drafts')).findOne({ cycleId, employeeId: eid }); if (!d) return null; const { _id, ...rest } = d; return rest; },
+    async upsertDraft(draft) { await (await col('drafts')).replaceOne({ _id: draft.id }, { _id: draft.id, ...draft }, { upsert: true }); },
+    async deleteDraft(id) { await (await col('drafts')).deleteOne({ _id: id }); },
     _backupTarget() { return null; } // Mongo data is durable; no local file backup
   };
 }

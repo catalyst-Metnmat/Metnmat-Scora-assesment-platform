@@ -1,10 +1,21 @@
-/* Employee self-assessment wizard: profile -> 16 domain steps -> review & submit
- * Drafts are saved per assessment cycle in localStorage so a new annual cycle
- * always starts clean. */
+/* Employee self-assessment wizard with server-side sessions.
+ *
+ * - The employee fills their profile once; the server issues a session token
+ *   (kept in localStorage) and stores the draft centrally.
+ * - Every rating autosaves to the server (debounced), so the employee can
+ *   close the browser and resume exactly where they left off — no re-login.
+ * - The assessment is live only inside the cycle's configured window; a
+ *   countdown is shown and the wizard locks itself when the deadline passes.
+ * - Employees with an HR-granted exception can work after the deadline.
+ */
 const app = document.getElementById('app');
-let DATA = null;
-let DRAFT_KEY = null;
-let state = { step: -1, profile: {}, ratings: {} }; // step -1 = profile, 0..n-1 = domains, n = review
+const TOKEN_KEY = 'metnmat-session-token';
+let DATA = null;            // framework
+let CYCLE = null;           // { id, name, opensAt, closesAt, isLive, mode }
+let TOKEN = localStorage.getItem(TOKEN_KEY) || '';
+let state = { step: -1, profile: {}, ratings: {} };
+let pendingSave = {};       // ratings changed since last save
+let saveTimer = null, saveStatus = 'idle', lastSavedAt = null, countdownTimer = null, locked = false;
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const scaleShort = ['None', 'Aware', 'Basic', 'Skilled', 'Advanced', 'Expert'];
@@ -12,18 +23,101 @@ const scaleShort = ['None', 'Aware', 'Basic', 'Skilled', 'Advanced', 'Expert'];
 function toast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
-  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2600);
-}
-function saveDraft() {
-  try { localStorage.setItem(DRAFT_KEY, JSON.stringify(state)); } catch {}
-}
-function loadDraft() {
-  try {
-    const d = JSON.parse(localStorage.getItem(DRAFT_KEY));
-    if (d && typeof d === 'object') state = { step: -1, profile: {}, ratings: {}, ...d };
-  } catch {}
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2800);
 }
 
+/* ---------------- autosave ---------------- */
+function queueSave(extra = {}) {
+  if (!TOKEN || locked) return;
+  Object.assign(pendingSave, extra.ratings || {});
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => flushSave(extra), 1200);
+  setSaveStatus('pending');
+}
+
+async function flushSave(extra = {}) {
+  if (!TOKEN || locked) return;
+  clearTimeout(saveTimer);
+  const ratings = pendingSave; pendingSave = {};
+  const body = { ratings, step: Math.max(0, state.step) };
+  if (extra.profile) body.profile = state.profile;
+  setSaveStatus('saving');
+  try {
+    const res = await fetch('/api/session/' + TOKEN, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    if (res.status === 423) { const j = await res.json(); return lockWizard(j.error); }
+    if (res.status === 404) { localStorage.removeItem(TOKEN_KEY); TOKEN = ''; return; }
+    if (!res.ok) throw new Error('save failed');
+    lastSavedAt = new Date();
+    setSaveStatus('saved');
+  } catch {
+    Object.assign(pendingSave, ratings); // keep changes, retry on next edit
+    setSaveStatus('error');
+    setTimeout(() => { if (Object.keys(pendingSave).length) flushSave(); }, 5000);
+  }
+}
+
+function setSaveStatus(s) {
+  saveStatus = s;
+  const el = document.getElementById('saveStatus');
+  if (!el) return;
+  el.textContent = s === 'saving' || s === 'pending' ? 'Saving…'
+    : s === 'saved' ? `Saved ${lastSavedAt ? lastSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}`
+    : s === 'error' ? 'Offline — retrying' : '';
+  el.className = 'save-status' + (s === 'error' ? ' err' : '');
+}
+
+window.addEventListener('pagehide', () => {
+  if (!TOKEN || locked || !Object.keys(pendingSave).length) return;
+  navigator.sendBeacon('/api/session/' + TOKEN,
+    new Blob([JSON.stringify({ ratings: pendingSave, step: Math.max(0, state.step) })], { type: 'application/json' }));
+});
+
+/* ---------------- deadline countdown ---------------- */
+function timeLeftText(closesAt) {
+  const ms = Date.parse(closesAt) - Date.now();
+  if (ms <= 0) return null;
+  const d = Math.floor(ms / 86400000), h = Math.floor(ms / 3600000) % 24, m = Math.floor(ms / 60000) % 60;
+  return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function updateCountdown() {
+  const el = document.getElementById('deadlineChip');
+  if (!el || !CYCLE) return;
+  if (CYCLE.mode === 'exception') { el.innerHTML = '<span class="badge band">Exception access granted by HR</span>'; return; }
+  if (!CYCLE.closesAt) { el.textContent = ''; return; }
+  const left = timeLeftText(CYCLE.closesAt);
+  if (!left) {
+    flushSave();
+    lockWizard('The assessment window has closed. Your progress is saved — contact HR if you need an exception.');
+    return;
+  }
+  const urgent = Date.parse(CYCLE.closesAt) - Date.now() < 3600e3;
+  el.innerHTML = `<span class="badge ${urgent ? 'fail' : 'pending'}">⏱ Closes in ${left}</span>`;
+}
+
+function startCountdown() {
+  clearInterval(countdownTimer);
+  updateCountdown();
+  countdownTimer = setInterval(updateCountdown, 30000);
+}
+
+function lockWizard(message) {
+  if (locked) return;
+  locked = true;
+  clearInterval(countdownTimer);
+  app.innerHTML = `
+    <div class="card done-box">
+      <h1>Assessment window closed</h1>
+      <p class="sub" style="margin:10px auto 8px">${esc(message || 'The assessment window has closed.')}</p>
+      <p class="muted" style="margin-bottom:22px">Everything you entered is safely saved. If HR grants you an exception, come back to this page and continue from where you left off.</p>
+      <a class="btn ghost" href="/">Back to Home</a>
+    </div>`;
+  window.scrollTo(0, 0);
+}
+
+/* ---------------- progress shell ---------------- */
 function totalRated() {
   return DATA.domains.flatMap(d => d.skills).filter(sk => state.ratings[sk.id] && state.ratings[sk.id].self != null).length;
 }
@@ -44,24 +138,28 @@ function progressShell(inner) {
   }).join('');
   return `
     <div class="progress-shell">
-      <div class="progress-head"><b>${stepLabel}</b><span>${rated} / ${total} skills rated (${pct}%)</span></div>
+      <div class="progress-head">
+        <b>${stepLabel}</b>
+        <span style="display:flex;gap:10px;align-items:center">
+          <span id="deadlineChip"></span>
+          <span id="saveStatus" class="save-status"></span>
+          <span>${rated} / ${total} rated (${pct}%)</span>
+        </span>
+      </div>
       <div class="pbar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div style="width:${pct}%"></div></div>
       <div class="domain-dots">${dots}</div>
     </div>${inner}`;
 }
 
-/* ---------- closed window ---------- */
-function renderClosed() {
-  app.innerHTML = `
-    <div class="card done-box">
-      <h1>Assessment window closed</h1>
-      <p class="sub" style="margin:10px auto 22px">There is no open assessment cycle right now. Please wait for HR to announce the next cycle.</p>
-      <a class="btn ghost" href="/">Back to Home</a>
-    </div>`;
-}
-
-/* ---------- profile step ---------- */
+/* ---------------- profile step ---------------- */
 function renderProfile() {
+  const windowNote = !CYCLE && DATA.cycle && !DATA.cycle.isLive
+    ? `<div class="card" style="border-left:4px solid var(--amber)"><b>The assessment window is not currently open.</b>
+       <div class="muted" style="margin-top:4px">If HR granted you an exception, enter your details below and continue — your access will be checked automatically.</div></div>`
+    : !CYCLE && !DATA.cycle
+    ? `<div class="card" style="border-left:4px solid var(--amber)"><b>No assessment cycle is announced right now.</b>
+       <div class="muted" style="margin-top:4px">Continue only if HR granted you an exception for a previous cycle.</div></div>` : '';
+
   const fields = DATA.profileFields.map(f => {
     const v = esc(state.profile[f.id] || '');
     let input;
@@ -78,26 +176,55 @@ function renderProfile() {
 
   app.innerHTML = progressShell(`
     <h1>Employee Profile</h1>
-    <p class="sub">Cycle: <b>${esc(DATA.cycle.name)}</b>. Fill every field — the HR team uses this to match the assessment to the right role.</p>
+    <p class="sub">${CYCLE ? `Cycle: <b>${esc(CYCLE.name)}</b>. ` : ''}Fill every field — the HR team uses this to match the assessment to the right role. Your progress is saved on the server, so you can continue later from any point.</p>
+    ${windowNote}
     <div class="card"><div class="grid2">${fields}</div>
       <div class="error-msg" id="err" hidden></div>
     </div>
     <div class="wiz-nav"><span></span><button class="btn" id="next">Continue to Skills &rarr;</button></div>
   `);
+  startCountdown();
 
   app.querySelectorAll('[data-pf]').forEach(el => el.addEventListener('input', () => {
-    state.profile[el.dataset.pf] = el.value; saveDraft();
+    state.profile[el.dataset.pf] = el.value;
   }));
-  document.getElementById('next').onclick = () => {
-    const missing = DATA.profileFields.filter(f => f.required && !(state.profile[f.id] || '').trim());
+  document.getElementById('next').onclick = async () => {
     const err = document.getElementById('err');
+    err.hidden = true;
+    const missing = DATA.profileFields.filter(f => f.required && !(state.profile[f.id] || '').trim());
     if (missing.length) { err.hidden = false; err.textContent = 'Please fill: ' + missing.map(f => f.label).join(', '); return; }
-    state.step = 0; saveDraft(); render(); window.scrollTo(0, 0);
+    const btn = document.getElementById('next');
+    btn.disabled = true; btn.textContent = 'Starting…';
+    try {
+      if (!TOKEN) {
+        const res = await fetch('/api/session/start', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ profile: state.profile })
+        });
+        const j = await res.json();
+        if (!res.ok) throw new Error(j.error || 'Could not start the assessment.');
+        TOKEN = j.token;
+        localStorage.setItem(TOKEN_KEY, TOKEN);
+        CYCLE = j.cycle;
+        state.ratings = j.draft.ratings || {};
+        state.step = j.resumed ? (j.draft.step ?? 0) : 0;
+        if (j.resumed) toast('Welcome back — your earlier progress was restored.');
+        if (CYCLE.mode === 'exception') toast('Exception access granted by HR — you can complete your assessment now.');
+      } else {
+        state.step = 0;
+        queueSave({ profile: true });
+        await flushSave({ profile: true });
+      }
+      render(); window.scrollTo(0, 0);
+    } catch (e) {
+      err.hidden = false; err.textContent = e.message;
+      btn.disabled = false; btn.textContent = 'Continue to Skills →';
+    }
   };
   bindDots();
 }
 
-/* ---------- domain step ---------- */
+/* ---------------- domain step ---------------- */
 function renderDomain() {
   const d = DATA.domains[state.step];
   const cards = d.skills.map(sk => {
@@ -126,28 +253,29 @@ function renderDomain() {
       <button class="btn" id="next">${state.step === DATA.domains.length - 1 ? 'Review & Submit' : 'Next Domain'} &rarr;</button>
     </div>
   `);
+  startCountdown();
+  setSaveStatus(saveStatus);
 
   app.querySelectorAll('.rate-btn').forEach(b => b.onclick = () => {
     const id = b.dataset.sk, v = Number(b.dataset.v);
     state.ratings[id] = { ...(state.ratings[id] || {}), self: v };
-    saveDraft();
+    queueSave({ ratings: { [id]: state.ratings[id] } });
     document.querySelectorAll(`#card-${CSS.escape(id)} .rate-btn`).forEach(x => {
       const on = Number(x.dataset.v) === v;
       x.classList.toggle('on', on);
       x.setAttribute('aria-pressed', on);
     });
-    // refresh the progress bar without re-rendering inputs
     const shell = document.querySelector('.progress-shell');
     const tmp = document.createElement('div'); tmp.innerHTML = progressShell('');
     shell.replaceWith(tmp.querySelector('.progress-shell'));
-    bindDots();
+    bindDots(); startCountdown(); setSaveStatus(saveStatus);
   });
   app.querySelectorAll('[data-ev]').forEach(el => el.addEventListener('input', () => {
     const id = el.dataset.ev;
     state.ratings[id] = { ...(state.ratings[id] || {}), evidence: el.value };
-    saveDraft();
+    queueSave({ ratings: { [id]: state.ratings[id] } });
   }));
-  document.getElementById('back').onclick = () => { state.step--; saveDraft(); render(); window.scrollTo(0, 0); };
+  document.getElementById('back').onclick = () => { state.step--; if (state.step >= 0) queueSave(); render(); window.scrollTo(0, 0); };
   document.getElementById('next').onclick = () => {
     const un = d.skills.filter(sk => !(state.ratings[sk.id] && state.ratings[sk.id].self != null));
     if (un.length) {
@@ -157,12 +285,12 @@ function renderDomain() {
       document.getElementById('card-' + un[0].id).scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
-    state.step++; saveDraft(); render(); window.scrollTo(0, 0);
+    state.step++; queueSave(); render(); window.scrollTo(0, 0);
   };
   bindDots();
 }
 
-/* ---------- review step ---------- */
+/* ---------------- review step ---------------- */
 function renderReview() {
   const total = DATA.domains.reduce((s, d) => s + d.skills.length, 0);
   const rated = totalRated();
@@ -177,7 +305,7 @@ function renderReview() {
 
   app.innerHTML = progressShell(`
     <h1>Review &amp; Submit</h1>
-    <p class="sub">Cycle: <b>${esc(DATA.cycle.name)}</b>. Check your domain summary below — click a row to revisit that domain. Once submitted, your assessment goes to HR for the validation interview.</p>
+    <p class="sub">${CYCLE ? `Cycle: <b>${esc(CYCLE.name)}</b>. ` : ''}Check your domain summary below — click a row to revisit that domain. Once submitted, your assessment goes to HR for the validation interview.</p>
     <div class="card">
       <table class="scale-table">
         <thead><tr><th></th><th>Domain</th><th>Rated</th><th>Self Avg</th></tr></thead>
@@ -195,25 +323,29 @@ function renderReview() {
       <button class="btn" id="submit" ${rated < total ? 'disabled' : ''}>Submit Assessment</button>
     </div>
   `);
+  startCountdown();
+  setSaveStatus(saveStatus);
 
   app.querySelectorAll('[data-goto-row]').forEach(tr => tr.onclick = () => {
-    state.step = Number(tr.dataset.gotoRow); saveDraft(); render(); window.scrollTo(0, 0);
+    state.step = Number(tr.dataset.gotoRow); queueSave(); render(); window.scrollTo(0, 0);
   });
-  document.getElementById('back').onclick = () => { state.step--; saveDraft(); render(); window.scrollTo(0, 0); };
+  document.getElementById('back').onclick = () => { state.step--; queueSave(); render(); window.scrollTo(0, 0); };
   document.getElementById('submit').onclick = async () => {
     const err = document.getElementById('err'); err.hidden = true;
     if (!document.getElementById('agree').checked) { err.hidden = false; err.textContent = 'Please tick the declaration before submitting.'; return; }
     const btn = document.getElementById('submit');
     btn.disabled = true; btn.textContent = 'Submitting…';
     try {
+      await flushSave(); // make sure the server draft is complete
       const res = await fetch('/api/submissions', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profile: state.profile, ratings: state.ratings })
+        body: JSON.stringify({ token: TOKEN })
       });
       const j = await res.json();
-      if (!res.ok) throw new Error(j.error || 'Submission failed. Please try again.');
-      localStorage.removeItem(DRAFT_KEY);
-      const colors = ['#c47b3f', '#d99a63', '#16304a', '#1e8e5a', '#a35f2a'];
+      if (!res.ok) throw new Error(j.error || 'Submission failed');
+      localStorage.removeItem(TOKEN_KEY); TOKEN = '';
+      clearInterval(countdownTimer);
+      const colors = ['#c01d22', '#e2474b', '#16304a', '#1e8e5a', '#8f1014'];
       const confetti = Array.from({ length: 18 }, (_, i) =>
         `<i style="--x:${(i * 137) % 100};--d:${(i % 9) * 0.22};--c:${colors[i % colors.length]}"></i>`).join('');
       app.innerHTML = `
@@ -236,24 +368,42 @@ function renderReview() {
 
 function bindDots() {
   document.querySelectorAll('.ddot').forEach(b => b.onclick = () => {
-    state.step = Number(b.dataset.goto); saveDraft(); render(); window.scrollTo(0, 0);
+    state.step = Number(b.dataset.goto); queueSave(); render(); window.scrollTo(0, 0);
   });
 }
 
 function render() {
+  if (locked) return;
   if (state.step === -1) renderProfile();
   else if (state.step >= DATA.domains.length) renderReview();
   else renderDomain();
 }
 
-fetch('/api/skills').then(r => r.json()).then(d => {
-  DATA = d;
-  if (!DATA.cycle) return renderClosed();
-  DRAFT_KEY = 'metnmat-assessment-draft-' + DATA.cycle.id;
-  loadDraft();
-  if (state.step > DATA.domains.length) state.step = DATA.domains.length;
+/* ---------------- boot ---------------- */
+(async () => {
+  try {
+    DATA = await (await fetch('/api/skills')).json();
+  } catch {
+    app.innerHTML = '<div class="empty">Could not reach the server. Please refresh the page.</div>';
+    return;
+  }
+  if (TOKEN) {
+    try {
+      const res = await fetch('/api/session/' + TOKEN);
+      if (res.ok) {
+        const j = await res.json();
+        CYCLE = j.cycle;
+        state.profile = j.draft.profile || {};
+        state.ratings = j.draft.ratings || {};
+        state.step = Math.min(j.draft.step ?? 0, DATA.domains.length);
+        if (!j.accessible) return lockWizard('The assessment window has closed. Your progress is saved — contact HR if you need an exception.');
+        render();
+        if (totalRated() > 0) toast('Welcome back — continuing from where you left off.');
+        return;
+      }
+      localStorage.removeItem(TOKEN_KEY); TOKEN = '';
+    } catch { /* fall through to fresh start */ }
+  }
+  state.step = -1;
   render();
-  if (totalRated() > 0) toast('Draft restored — your progress was saved on this device.');
-}).catch(() => {
-  app.innerHTML = '<div class="empty">Could not reach the server. Please refresh the page.</div>';
-});
+})();

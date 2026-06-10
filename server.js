@@ -44,6 +44,38 @@ const newId = store.newId;
 const normalizeEmpId = v => String(v || '').trim().toLowerCase();
 const slug = v => String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
+// ---- assessment window & per-employee exception logic ----
+function cycleIsLive(cycle, now = Date.now()) {
+  if (!cycle || cycle.status !== 'open') return false;
+  if (cycle.opensAt && now < Date.parse(cycle.opensAt)) return false;
+  if (cycle.closesAt && now > Date.parse(cycle.closesAt)) return false;
+  return true;
+}
+function activeException(cycle, employeeId, now = Date.now()) {
+  const eid = normalizeEmpId(employeeId);
+  if (!eid) return null;
+  return (cycle.exceptions || []).find(e =>
+    normalizeEmpId(e.employeeId) === eid && (!e.expiresAt || now <= Date.parse(e.expiresAt))) || null;
+}
+// access = live window, OR a personal exception granted by HR/Admin
+function cycleAccess(cycle, employeeId) {
+  if (cycleIsLive(cycle)) return { allowed: true, mode: 'live' };
+  if (activeException(cycle, employeeId)) return { allowed: true, mode: 'exception' };
+  return { allowed: false };
+}
+// which cycle can this employee work in right now?
+function findAccessCycle(cycles, employeeId) {
+  const live = cycles.find(c => cycleIsLive(c));
+  if (live) return { cycle: live, mode: 'live' };
+  const byNewest = [...cycles].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  for (const c of byNewest) if (activeException(c, employeeId)) return { cycle: c, mode: 'exception' };
+  return null;
+}
+function publicCycleInfo(cycle) {
+  if (!cycle) return null;
+  return { id: cycle.id, name: cycle.name, opensAt: cycle.opensAt || null, closesAt: cycle.closesAt || null, isLive: cycleIsLive(cycle) };
+}
+
 function allSkills(fw) { return fw.domains.flatMap(d => d.skills); }
 
 function activeWeights(fw, cfg) {
@@ -203,47 +235,150 @@ app.get('/api/skills', wrap(async (_req, res) => {
     company: fw.company, title: fw.title, tagline: fw.tagline,
     scale: fw.scale, profileFields: fw.profileFields,
     domains: fw.domains.map(d => ({ code: d.code, name: d.name, skills: d.skills })),
-    cycle: open ? { id: open.id, name: open.name } : null
+    cycle: publicCycleInfo(open)
   });
 }));
 
-app.post('/api/submissions', submitLimit, wrap(async (req, res) => {
+// ---------------------------------------------------------------- employee sessions (server-side drafts)
+// Start (or resume) an assessment session. Identified by employee ID within the
+// accessible cycle; returns a session token used for autosave and submission.
+app.post('/api/session/start', submitLimit, wrap(async (req, res) => {
   const fw = await store.getFramework();
   const cycles = await store.listCycles();
-  const open = cycles.find(c => c.status === 'open');
-  if (!open) return res.status(409).json({ error: 'The assessment window is currently closed. Please contact HR.' });
-
-  const { profile, ratings } = req.body || {};
+  const { profile } = req.body || {};
   if (!profile || typeof profile !== 'object') return res.status(400).json({ error: 'Profile is required' });
   for (const f of fw.profileFields.filter(f => f.required)) {
     if (!profile[f.id] || !String(profile[f.id]).trim()) return res.status(400).json({ error: `${f.label} is required` });
   }
-  if (!ratings || typeof ratings !== 'object') return res.status(400).json({ error: 'Ratings are required' });
+  const eid = normalizeEmpId(profile.employeeId);
+  const access = findAccessCycle(cycles, eid);
+  if (!access) return res.status(423).json({ error: 'The assessment window is closed. Contact HR if you need an exception to be granted.' });
+  const { cycle, mode } = access;
+
+  const existingSub = (await store.listSubmissions(cycle.id)).find(s => normalizeEmpId(s.profile.employeeId) === eid);
+  if (existingSub) return res.status(409).json({ error: `An assessment for employee ID "${String(profile.employeeId).trim()}" is already submitted in ${cycle.name}. Contact HR if it needs to be redone.` });
+
+  const cleanProfile = Object.fromEntries(fw.profileFields.map(f => [f.id, String(profile[f.id] || '').trim().slice(0, 300)]));
+  let draft = await store.getDraftByEmployee(cycle.id, eid);
+  if (draft) {
+    draft.profile = cleanProfile;
+    draft.updatedAt = new Date().toISOString();
+  } else {
+    draft = {
+      id: newId(), token: newId() + newId(), cycleId: cycle.id, employeeId: eid,
+      profile: cleanProfile, ratings: {}, step: 0,
+      startedAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+    };
+    audit('session.started', req, { employeeId: profile.employeeId, cycle: cycle.name, mode });
+  }
+  await store.upsertDraft(draft);
+  res.json({
+    ok: true, token: draft.token, mode,
+    cycle: { ...publicCycleInfo(cycle), mode },
+    draft: { profile: draft.profile, ratings: draft.ratings, step: draft.step },
+    resumed: Object.keys(draft.ratings).length > 0
+  });
+}));
+
+// Resume a session by token (e.g. employee returns the next day)
+app.get('/api/session/:token', wrap(async (req, res) => {
+  const draft = await store.getDraftByToken(req.params.token);
+  if (!draft) return res.status(404).json({ error: 'Session not found' });
+  const cycles = await store.listCycles();
+  const cycle = cycles.find(c => c.id === draft.cycleId);
+  const access = cycle ? cycleAccess(cycle, draft.employeeId) : { allowed: false };
+  res.json({
+    ok: true,
+    cycle: cycle ? { ...publicCycleInfo(cycle), mode: access.mode || null } : null,
+    accessible: access.allowed,
+    draft: { profile: draft.profile, ratings: draft.ratings, step: draft.step }
+  });
+}));
+
+// Autosave progress (PUT; POST alias supports navigator.sendBeacon on page close)
+async function saveSession(req, res) {
+  const draft = await store.getDraftByToken(req.params.token);
+  if (!draft) return res.status(404).json({ error: 'Session not found' });
+  const cycles = await store.listCycles();
+  const cycle = cycles.find(c => c.id === draft.cycleId);
+  const access = cycle ? cycleAccess(cycle, draft.employeeId) : { allowed: false };
+  if (!access.allowed) return res.status(423).json({ error: 'The assessment window has closed. Your progress is saved — contact HR for an exception.' });
+
+  let body = req.body;
+  if (Buffer.isBuffer(body)) { try { body = JSON.parse(body.toString('utf8')); } catch { body = {}; } }
+  const { ratings, step, profile } = body || {};
+  if (ratings && typeof ratings === 'object') {
+    const fw = await store.getFramework();
+    const valid = new Set(allSkills(fw).map(sk => sk.id));
+    for (const [id, r] of Object.entries(ratings)) {
+      if (!valid.has(id) || !r || typeof r !== 'object') continue;
+      const n = Number(r.self);
+      draft.ratings[id] = {
+        self: isNaN(n) || r.self == null || r.self === '' ? null : Math.min(5, Math.max(0, Math.round(n))),
+        evidence: String(r.evidence || '').trim().slice(0, 500)
+      };
+      if (draft.ratings[id].self == null) delete draft.ratings[id];
+    }
+  }
+  if (step != null && !isNaN(Number(step))) draft.step = Math.max(0, Math.round(Number(step)));
+  if (profile && typeof profile === 'object') {
+    const fw = await store.getFramework();
+    draft.profile = Object.fromEntries(fw.profileFields.map(f => [f.id, String(profile[f.id] ?? draft.profile[f.id] ?? '').trim().slice(0, 300)]));
+  }
+  draft.updatedAt = new Date().toISOString();
+  await store.upsertDraft(draft);
+  res.json({ ok: true, savedAt: draft.updatedAt });
+}
+app.put('/api/session/:token', wrap(saveSession));
+app.post('/api/session/:token', express.raw({ type: () => true, limit: '2mb' }), wrap(saveSession));
+
+// Final submission — pulls everything from the autosaved server-side draft
+app.post('/api/submissions', submitLimit, wrap(async (req, res) => {
+  const { token } = req.body || {};
+  const draft = await store.getDraftByToken(String(token || ''));
+  if (!draft) return res.status(404).json({ error: 'Session not found or already submitted. Refresh the page.' });
+
+  const fw = await store.getFramework();
+  const cycles = await store.listCycles();
+  const cycle = cycles.find(c => c.id === draft.cycleId);
+  const access = cycle ? cycleAccess(cycle, draft.employeeId) : { allowed: false };
+  if (!access.allowed) return res.status(423).json({ error: 'The assessment window has closed. Your progress is saved — contact HR for an exception.' });
+
   const skills = allSkills(fw);
   const missing = skills.filter(sk => {
-    const r = ratings[sk.id];
-    return !r || r.self == null || r.self === '' || isNaN(Number(r.self)) || Number(r.self) < 0 || Number(r.self) > 5;
+    const r = draft.ratings[sk.id];
+    return !r || r.self == null || isNaN(Number(r.self)) || Number(r.self) < 0 || Number(r.self) > 5;
   });
   if (missing.length) return res.status(400).json({ error: `${missing.length} skill(s) not rated. Enter 0 explicitly where there is no exposure.` });
 
-  const eid = normalizeEmpId(profile.employeeId);
-  const existing = await store.listSubmissions(open.id);
-  if (eid && existing.find(s => normalizeEmpId(s.profile.employeeId) === eid))
-    return res.status(409).json({ error: `An assessment for employee ID "${String(profile.employeeId).trim()}" already exists in ${open.name}. Contact HR if it needs to be redone.` });
+  const existing = await store.listSubmissions(cycle.id);
+  if (existing.find(s => normalizeEmpId(s.profile.employeeId) === draft.employeeId))
+    return res.status(409).json({ error: `An assessment for this employee ID already exists in ${cycle.name}. Contact HR if it needs to be redone.` });
 
   const clean = {};
   for (const sk of skills) {
-    const r = ratings[sk.id];
+    const r = draft.ratings[sk.id];
     clean[sk.id] = { self: Math.round(Number(r.self)), evidence: String(r.evidence || '').trim().slice(0, 500) };
   }
   const sub = {
-    id: newId(), cycleId: open.id,
-    profile: Object.fromEntries(fw.profileFields.map(f => [f.id, String(profile[f.id] || '').trim().slice(0, 300)])),
-    ratings: clean, status: 'submitted', submittedAt: new Date().toISOString(), validatedAt: null
+    id: newId(), cycleId: cycle.id,
+    profile: draft.profile,
+    ratings: clean, status: 'submitted',
+    viaException: access.mode === 'exception' || undefined,
+    submittedAt: new Date().toISOString(), validatedAt: null
   };
   await store.insertSubmission(sub);
-  audit('submission.created', req, { sub: sub.id, employeeId: sub.profile.employeeId, cycle: open.name });
-  res.json({ ok: true, id: sub.id, cycle: open.name });
+  await store.deleteDraft(draft.id);
+  // an exception is single-use: granting closes automatically once used
+  if (access.mode === 'exception') {
+    await store.updateCycles(cs => {
+      const c = cs.find(x => x.id === cycle.id);
+      if (c && c.exceptions) c.exceptions = c.exceptions.filter(e => normalizeEmpId(e.employeeId) !== draft.employeeId);
+    });
+    audit('exception.consumed', req, { employeeId: sub.profile.employeeId, cycle: cycle.name });
+  }
+  audit('submission.created', req, { sub: sub.id, employeeId: sub.profile.employeeId, cycle: cycle.name, mode: access.mode });
+  res.json({ ok: true, id: sub.id, cycle: cycle.name });
 }));
 
 // ---------------------------------------------------------------- HR API
@@ -254,32 +389,102 @@ hr.get('/whoami', (req, res) => res.json({ role: req.isAdmin ? 'admin' : 'hr' })
 
 hr.get('/cycles', wrap(async (_req, res) => res.json(await store.listCycles())));
 
+const parseWhen = v => { if (!v) return null; const t = Date.parse(v); return isNaN(t) ? undefined : new Date(t).toISOString(); };
+
 hr.post('/cycles', wrap(async (req, res) => {
-  const name = String((req.body || {}).name || '').trim().slice(0, 80);
+  const { name: rawName, opensAt, closesAt } = req.body || {};
+  const name = String(rawName || '').trim().slice(0, 80);
   if (!name) return res.status(400).json({ error: 'Cycle name is required (e.g. "FY 2026-27")' });
+  const o = parseWhen(opensAt), c = parseWhen(closesAt);
+  if (o === undefined || c === undefined) return res.status(400).json({ error: 'Invalid date/time format.' });
+  if (o && c && Date.parse(c) <= Date.parse(o)) return res.status(400).json({ error: 'The close time must be after the open time.' });
   const cycles = await store.listCycles();
-  if (cycles.some(c => c.name.toLowerCase() === name.toLowerCase())) return res.status(409).json({ error: 'A cycle with this name already exists.' });
-  await store.updateCycles(cs => { for (const c of cs) if (c.status === 'open') { c.status = 'closed'; c.closedAt = new Date().toISOString(); } });
-  const cyc = { id: newId(), name, status: 'open', createdAt: new Date().toISOString(), closedAt: null };
+  if (cycles.some(x => x.name.toLowerCase() === name.toLowerCase())) return res.status(409).json({ error: 'A cycle with this name already exists.' });
+  await store.updateCycles(cs => { for (const x of cs) if (x.status === 'open') { x.status = 'closed'; x.closedAt = new Date().toISOString(); } });
+  const cyc = { id: newId(), name, status: 'open', opensAt: o, closesAt: c, exceptions: [], createdAt: new Date().toISOString(), closedAt: null };
   await store.insertCycle(cyc);
-  audit('cycle.opened', req, { cycle: name });
+  audit('cycle.opened', req, { cycle: name, window: `${o || 'now'} -> ${c || 'no limit'}` });
   res.json(cyc);
 }));
 
 hr.put('/cycles/:id', wrap(async (req, res) => {
-  const action = (req.body || {}).action;
-  let found = null;
+  const { action, opensAt, closesAt } = req.body || {};
+  let found = null, err = null;
   await store.updateCycles(cs => {
     const cyc = cs.find(c => c.id === req.params.id);
     if (!cyc) return;
     found = cyc;
     if (action === 'close') { cyc.status = 'closed'; cyc.closedAt = new Date().toISOString(); }
     else if (action === 'reopen') { for (const c of cs) if (c.status === 'open') { c.status = 'closed'; c.closedAt = new Date().toISOString(); } cyc.status = 'open'; cyc.closedAt = null; }
+    else if (action === 'schedule') {
+      const o = parseWhen(opensAt), c2 = parseWhen(closesAt);
+      if (o === undefined || c2 === undefined) { err = 'Invalid date/time format.'; return; }
+      if (o && c2 && Date.parse(c2) <= Date.parse(o)) { err = 'The close time must be after the open time.'; return; }
+      cyc.opensAt = o; cyc.closesAt = c2;
+    }
   });
   if (!found) return res.status(404).json({ error: 'Cycle not found' });
-  if (!['close', 'reopen'].includes(action)) return res.status(400).json({ error: 'action must be "close" or "reopen"' });
+  if (err) return res.status(400).json({ error: err });
+  if (!['close', 'reopen', 'schedule'].includes(action)) return res.status(400).json({ error: 'action must be "close", "reopen" or "schedule"' });
   audit('cycle.' + action, req, { cycle: found.name });
   res.json(found);
+}));
+
+// ---- per-employee exceptions: reopen a closed assessment for specific employees ----
+hr.post('/cycles/:id/exceptions', wrap(async (req, res) => {
+  const { employeeId, name, hours } = req.body || {};
+  const eid = String(employeeId || '').trim();
+  if (!eid) return res.status(400).json({ error: 'Employee ID is required.' });
+  const h = Number(hours);
+  const expiresAt = !isNaN(h) && h > 0 ? new Date(Date.now() + h * 3600e3).toISOString() : null;
+  let found = null;
+  await store.updateCycles(cs => {
+    const cyc = cs.find(c => c.id === req.params.id);
+    if (!cyc) return;
+    found = cyc;
+    cyc.exceptions = (cyc.exceptions || []).filter(e => normalizeEmpId(e.employeeId) !== normalizeEmpId(eid));
+    cyc.exceptions.push({ employeeId: eid, name: String(name || '').trim().slice(0, 100), grantedAt: new Date().toISOString(), expiresAt });
+  });
+  if (!found) return res.status(404).json({ error: 'Cycle not found' });
+  audit('exception.granted', req, { employeeId: eid, cycle: found.name, expiresAt: expiresAt || 'until removed' });
+  res.json({ ok: true, exceptions: found.exceptions });
+}));
+
+hr.delete('/cycles/:id/exceptions/:employeeId', wrap(async (req, res) => {
+  const eid = normalizeEmpId(decodeURIComponent(req.params.employeeId));
+  let found = null;
+  await store.updateCycles(cs => {
+    const cyc = cs.find(c => c.id === req.params.id);
+    if (!cyc) return;
+    found = cyc;
+    cyc.exceptions = (cyc.exceptions || []).filter(e => normalizeEmpId(e.employeeId) !== eid);
+  });
+  if (!found) return res.status(404).json({ error: 'Cycle not found' });
+  audit('exception.removed', req, { employeeId: eid, cycle: found.name });
+  res.json({ ok: true, exceptions: found.exceptions });
+}));
+
+// in-progress drafts (live monitoring during the window)
+hr.get('/drafts', wrap(async (req, res) => {
+  const fw = await store.getFramework();
+  const total = allSkills(fw).length;
+  const drafts = await store.listDrafts(req.query.cycleId || undefined);
+  res.json(drafts.map(d => ({
+    id: d.id, cycleId: d.cycleId, name: d.profile.name, employeeId: d.profile.employeeId,
+    department: d.profile.department || '—',
+    ratedCount: Object.keys(d.ratings).length, totalSkills: total,
+    startedAt: d.startedAt, updatedAt: d.updatedAt
+  })).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+}));
+
+// discard an abandoned in-progress draft
+hr.delete('/drafts/:id', wrap(async (req, res) => {
+  const drafts = await store.listDrafts();
+  const d = drafts.find(x => x.id === req.params.id);
+  if (!d) return res.status(404).json({ error: 'Draft not found' });
+  await store.deleteDraft(d.id);
+  audit('draft.discarded', req, { employeeId: d.profile.employeeId });
+  res.json({ ok: true });
 }));
 
 hr.get('/submissions', wrap(async (req, res) => {

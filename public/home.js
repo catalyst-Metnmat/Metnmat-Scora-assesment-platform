@@ -64,19 +64,38 @@ fetch('/api/skills').then(r => r.json()).then(d => {
   /* assessment window */
   const badge = document.getElementById('heroBadge');
   const box = document.getElementById('cycleBox');
-  if (d.cycle) {
-    badge.innerHTML = '<span class="pulse-dot"></span>' + esc(d.cycle.name) + ' — window open';
-    const draft = localStorage.getItem('metnmat-assessment-draft-' + d.cycle.id);
+  const hasSession = !!localStorage.getItem('metnmat-session-token');
+  const fmtWhen = iso => new Date(iso).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const timeLeft = iso => {
+    const ms = Date.parse(iso) - Date.now();
+    if (ms <= 0) return null;
+    const dd = Math.floor(ms / 86400000), hh = Math.floor(ms / 3600000) % 24, mm = Math.floor(ms / 60000) % 60;
+    return dd > 0 ? `${dd}d ${hh}h` : hh > 0 ? `${hh}h ${mm}m` : `${mm}m`;
+  };
+  const startBtn = label => `
+    <a class="btn" href="/assessment">${label}
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>`;
+
+  if (d.cycle && d.cycle.isLive) {
+    const left = d.cycle.closesAt ? timeLeft(d.cycle.closesAt) : null;
+    badge.innerHTML = '<span class="pulse-dot"></span>' + esc(d.cycle.name) + (left ? ` — closes in ${left}` : ' — window open');
+    box.innerHTML = startBtn(hasSession ? 'Continue Self-Assessment' : 'Start Self-Assessment') + `
+      <div class="cycle-line" style="margin-top:14px">${hasSession
+        ? 'Your progress is saved on the server — pick up exactly where you left off.'
+        : 'Takes roughly 30–45 minutes. Progress saves automatically — you can stop and resume any time' + (d.cycle.closesAt ? ' before the deadline (' + fmtWhen(d.cycle.closesAt) + ')' : '') + '.'}</div>`;
+  } else if (d.cycle && d.cycle.opensAt && Date.parse(d.cycle.opensAt) > Date.now()) {
+    badge.classList.add('closed');
+    badge.innerHTML = '<span class="pulse-dot"></span>' + esc(d.cycle.name) + ' — opens soon';
     box.innerHTML = `
-      <a class="btn" href="/assessment">${draft ? 'Continue Self-Assessment' : 'Start Self-Assessment'}
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
-      <div class="cycle-line" style="margin-top:14px">${draft ? 'A saved draft was found on this device — pick up where you left off.' : 'Takes roughly 30–45 minutes. Your progress saves automatically.'}</div>`;
+      <p class="cycle-line closed">The assessment window opens on <b>${fmtWhen(d.cycle.opensAt)}</b>.</p>
+      ${startBtn('Start Self-Assessment').replace('class="btn"', 'class="btn" style="opacity:.5;pointer-events:none" aria-disabled="true"')}`;
   } else {
     badge.classList.add('closed');
     badge.innerHTML = '<span class="pulse-dot"></span>Window closed';
     box.innerHTML = `
       <p class="cycle-line closed">The assessment window is currently <b>closed</b>. Please wait for HR to announce the next cycle.</p>
-      <a class="btn" aria-disabled="true" style="opacity:.5;pointer-events:none" href="/assessment">Start Self-Assessment</a>`;
+      ${startBtn(hasSession ? 'Continue (saved session)' : 'Exception access — start here').replace('class="btn"', 'class="btn ghost" style="border-color:rgba(255,255,255,.3);color:#cfdbe7"')}
+      <div class="cycle-line" style="margin-top:10px">Granted an exception by HR? You can still complete your assessment.</div>`;
   }
 
   initReveal();
