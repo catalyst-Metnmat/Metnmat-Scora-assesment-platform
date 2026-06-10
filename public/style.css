@@ -78,7 +78,7 @@ h1, h2, h3, .brand, .btn { font-family: var(--font-head); }
 .logo-mark svg { width: 30px; height: 30px; display: block; }
 .logo-img { height: 26px; width: auto; display: block; }
 /* stacked METNMAT logo on white login / result cards */
-.login-logo { display: block; height: 88px; width: auto; margin: 2px auto 6px; }
+.login-logo { display: block; height: 60px; width: auto; margin: 0 auto 4px; }
 .logo-mark::after {
   content: ""; position: absolute; inset: 0;
   background: linear-gradient(115deg, transparent 30%, rgba(255, 255, 255, .35) 50%, transparent 70%);
@@ -618,9 +618,9 @@ body.embed main.wrap { padding-top: 10px; padding-bottom: 24px; }
   .subnav-link { margin-left: 0; }
 }
 
-.login-card { max-width: 440px; margin: 56px auto; position: relative; overflow: hidden; padding-top: 28px; animation: fadeUp .6s var(--ease) both; }
+.login-card { max-width: 440px; margin: 24px auto; position: relative; overflow: hidden; padding-top: 22px; animation: fadeUp .6s var(--ease) both; }
 .login-card::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: var(--copper-grad); }
-.login-brand { text-align: center; margin-bottom: 22px; }
+.login-brand { text-align: center; margin-bottom: 14px; }
 .login-brand .wm { font-family: "Cinzel", serif; font-weight: 700; font-size: 30px; letter-spacing: 3px; display: block; }
 
 /* generated SCORA code display */

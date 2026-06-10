@@ -50,7 +50,7 @@
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| 1 | Email actually delivering | **Blocked (config)** | Code is complete; Resend rejects until `metnmat.com` is verified in the key's account. **Action: verify domain / use the verified-account key.** |
+| 1 | Email actually delivering | **✔ Working** | Verified live 10 Jun 2026: registration + recovery emails send from `noreply@metnmat.com` (`emailed:true`). Remember to set `RESEND_API_KEY` in Render env too. |
 | 2 | Dedicated **Department Performance**, **Skill-Gap**, **Competency Matrix**, **HR Evaluation** reports as standalone PDFs | **✔ Done** | Added as branded PDFs (HR → Analytics → Reports ▾), alongside Employee Report & Executive Summary. All six now exist. |
 | 3 | Attachment download on `/my` (employee self-view of own files) | **Partial** | Employees can view/remove files during the assessment; `/my` is an aggregate dashboard with no per-answer view. |
 | 4 | Anti-virus / content scanning of uploads | **Missing** | Uploads are validated by MIME type, size (5 MB), and count (3); no malware scanning. |
@@ -148,7 +148,7 @@
 
 ### Blocking items before go-live (must do)
 1. **Rotate** `MONGODB_URI` password, `ADMIN_KEY`, `HR_KEY`; set them only in Render env vars.
-2. **Verify `metnmat.com` in Resend** (or use the verified-account key) so registration & recovery emails actually send.
+2. ~~Verify `metnmat.com` in Resend~~ ✔ done — working key in local `.env`; **copy `RESEND_API_KEY` into Render env vars**.
 3. **Delete the DEMO submissions** (Asha/Bikram) from Atlas.
 4. **Set `PUBLIC_URL`** in Render so email links point to the live site; add **`JWT_SECRET`** so named-user sessions survive redeploys.
 5. Establish a **weekly Atlas export/backup** habit (M0 has no auto-backup).
