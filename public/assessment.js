@@ -154,6 +154,61 @@ function lockWizard(message) {
   window.scrollTo(0, 0);
 }
 
+/* ---------------- evidence attachments ---------------- */
+const ATT_ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.xls,.xlsx,.txt';
+const MAX_ATT_MB = 5, MAX_ATT_PER_SKILL = 3;
+const fmtSize = b => b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(0) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
+function attachHtml(skId, files) {
+  const chips = files.map(f => `
+    <span class="file-chip">
+      <a href="/api/attachment/${f.id}?token=${encodeURIComponent(TOKEN)}" target="_blank" rel="noopener" title="Download ${esc(f.name)}">📄 ${esc(f.name)} <span class="fsz">${fmtSize(f.size)}</span></a>
+      <button type="button" class="file-x" data-att-del="${f.id}" data-att-sk="${skId}" aria-label="Remove ${esc(f.name)}">✕</button>
+    </span>`).join('');
+  const canAdd = files.length < MAX_ATT_PER_SKILL;
+  const addBtn = canAdd
+    ? `<label class="attach-btn">📎 Attach file<input type="file" data-attach="${skId}" accept="${ATT_ACCEPT}" hidden></label>`
+    : `<span class="muted" style="font-size:12px">Max ${MAX_ATT_PER_SKILL} files</span>`;
+  return chips + addBtn;
+}
+// re-render just one skill's attachment row and rebind its controls
+function refreshAttachments(skId) {
+  const box = document.querySelector(`[data-att-for="${CSS.escape(skId)}"]`);
+  if (!box) return;
+  box.innerHTML = attachHtml(skId, (state.ratings[skId] && state.ratings[skId].files) || []);
+  const inp = box.querySelector('[data-attach]');
+  if (inp) inp.addEventListener('change', async () => {
+    const file = inp.files && inp.files[0]; inp.value = '';
+    if (!file) return;
+    if (file.size > MAX_ATT_MB * 1048576) { toast(`File too large — maximum ${MAX_ATT_MB} MB.`); return; }
+    await uploadAttachment(skId, file);
+  });
+  box.querySelectorAll('[data-att-del]').forEach(b => b.onclick = () => removeAttachment(skId, b.dataset.attDel));
+}
+async function uploadAttachment(skId, file) {
+  if (!TOKEN) return;
+  toast('Uploading…');
+  try {
+    const res = await fetch(`/api/session/${TOKEN}/attachment?skill=${encodeURIComponent(skId)}&name=${encodeURIComponent(file.name)}`, {
+      method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || 'Upload failed.');
+    state.ratings[skId] = { ...(state.ratings[skId] || {}), files: j.files };
+    refreshAttachments(skId);
+    toast('File attached.');
+  } catch (e) { toast(e.message); }
+}
+async function removeAttachment(skId, fileId) {
+  if (!TOKEN) return;
+  try {
+    const res = await fetch(`/api/session/${TOKEN}/attachment/${fileId}`, { method: 'DELETE' });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || 'Could not remove file.');
+    if (state.ratings[skId]) state.ratings[skId].files = j.files && j.files.length ? j.files : undefined;
+    refreshAttachments(skId);
+  } catch (e) { toast(e.message); }
+}
+
 /* ---------------- progress shell ---------------- */
 // a question is "answered" according to its type; optional questions don't count
 function answered(sk) {
@@ -475,6 +530,7 @@ function renderDomain() {
         ${body}
         <div class="evidence"><input type="text" data-ev="${sk.id}" maxlength="500"
           placeholder="Evidence — projects, tools, certifications or examples (optional)" value="${esc(r.evidence || '')}"></div>
+        <div class="attachments" data-att-for="${sk.id}">${attachHtml(sk.id, r.files || [])}</div>
       </div>`;
   }).join('');
 
@@ -523,6 +579,15 @@ function renderDomain() {
     state.ratings[id] = { ...(state.ratings[id] || {}), evidence: el.value };
     queueSave({ ratings: { [id]: state.ratings[id] } });
   }));
+  // evidence file attachments — upload on select, remove on ✕
+  app.querySelectorAll('[data-attach]').forEach(el => el.addEventListener('change', async () => {
+    const id = el.dataset.attach, file = el.files && el.files[0];
+    el.value = '';
+    if (!file) return;
+    if (file.size > MAX_ATT_MB * 1048576) { toast(`File too large — maximum ${MAX_ATT_MB} MB.`); return; }
+    await uploadAttachment(id, file);
+  }));
+  app.querySelectorAll('[data-att-del]').forEach(el => el.onclick = () => removeAttachment(el.dataset.attSk, el.dataset.attDel));
   document.getElementById('next').onclick = async () => {
     const un = requiredSkills(d).filter(sk => !answered(sk));
     if (un.length) {

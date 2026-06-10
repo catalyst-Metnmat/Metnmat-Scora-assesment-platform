@@ -27,6 +27,21 @@ function authHeaders() {
 }
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtBytes = b => b == null ? '' : b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(0) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
+
+// download an evidence file with HR auth headers (a plain link can't carry the key)
+async function downloadAttachment(id, name) {
+  try {
+    const res = await fetch('/api/attachment/' + id, { headers: authHeaders() });
+    if (!res.ok) throw new Error('Could not download file.');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name || 'evidence';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  } catch (e) { toast(e.message); }
+}
 const fmtDate = iso => iso ? new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
 const fmtNum = v => v == null ? '—' : Number(v).toFixed(2);
 
@@ -1145,7 +1160,8 @@ async function renderDetail(id) {
         <div class="hr-skill">
           <div><div class="sname">${sk.sno}. ${esc(sk.name)}</div>
             ${r.answer !== undefined && r.answer !== null && r.answer !== '' ? `<div class="ev"><b>Answer:</b> ${esc(sk.options ? (sk.options[r.answer] ?? r.answer) : r.answer)}</div>` : ''}
-            ${r.evidence ? `<div class="ev">Evidence: ${esc(r.evidence)}</div>` : ''}</div>
+            ${r.evidence ? `<div class="ev">Evidence: ${esc(r.evidence)}</div>` : ''}
+            ${(r.files && r.files.length) ? `<div class="ev"><b>Files:</b> ${r.files.map(f => `<button type="button" class="file-chip dl" data-dl="${f.id}" data-dlname="${esc(f.name)}">📄 ${esc(f.name)} <span class="fsz">${fmtBytes(f.size)}</span></button>`).join(' ')}</div>` : ''}</div>
           <div style="display:flex;gap:8px;align-items:center">
             <span class="self-pill" title="Self rating">${r.self ?? '—'}</span>
             <select data-hr="${sk.id}" aria-label="HR validated rating for ${esc(sk.name)}">${opts}</select>
@@ -1217,6 +1233,7 @@ async function renderDetail(id) {
   app.querySelectorAll('[data-rm]').forEach(el => el.addEventListener('input', () => {
     pending[el.dataset.rm] = { ...(pending[el.dataset.rm] || {}), remark: el.value };
   }));
+  app.querySelectorAll('[data-dl]').forEach(b => b.onclick = () => downloadAttachment(b.dataset.dl, b.dataset.dlname));
   app.querySelectorAll('[data-copy]').forEach(b => b.onclick = () => {
     const d = SKILLS.domains.find(x => x.code === b.dataset.copy);
     for (const sk of d.skills) {

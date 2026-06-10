@@ -47,6 +47,7 @@ function fileDriver() {
   if (!Array.isArray(db.employees)) db.employees = [];
   if (!Array.isArray(db.users)) db.users = [];
   if (!Array.isArray(db.empAccounts)) db.empAccounts = [];
+  if (!Array.isArray(db.attachments)) db.attachments = [];
   if (!db.frameworkSnapshots || typeof db.frameworkSnapshots !== 'object') db.frameworkSnapshots = {};
 
   let framework = loadJson(FW_FILE, null);
@@ -128,6 +129,11 @@ function fileDriver() {
     async getEmpAccountByEmail(emailNorm) { const a = (db.empAccounts || []).find(x => x.emailNorm === emailNorm); return a ? JSON.parse(JSON.stringify(a)) : null; },
     async insertEmpAccount(acc) { if (!db.empAccounts) db.empAccounts = []; db.empAccounts.push(acc); saveDb(); },
     async deleteEmpAccount(code) { if (!db.empAccounts) return; const i = db.empAccounts.findIndex(x => x.code === code); if (i >= 0) db.empAccounts.splice(i, 1); saveDb(); },
+    // ---- evidence attachments (binary stored as base64) ----
+    async insertAttachment(att) { if (!db.attachments) db.attachments = []; db.attachments.push(att); saveDb(); },
+    async getAttachment(id) { const a = (db.attachments || []).find(x => x.id === id); return a ? JSON.parse(JSON.stringify(a)) : null; },
+    async deleteAttachment(id) { if (!db.attachments) return; const i = db.attachments.findIndex(x => x.id === id); if (i >= 0) { db.attachments.splice(i, 1); saveDb(); } },
+    async deleteAttachmentsByOwner(owner, cycleId) { if (!db.attachments) return; const before = db.attachments.length; db.attachments = db.attachments.filter(a => !(a.owner === owner && (!cycleId || a.cycleId === cycleId))); if (db.attachments.length !== before) saveDb(); },
     _backupTarget() { return { db, dir: DATA_DIR }; }
   };
 }
@@ -172,6 +178,7 @@ function mongoDriver(uri) {
       await (await col('users')).createIndex({ username: 1 }, { unique: true });
       await (await col('empAccounts')).createIndex({ code: 1 }, { unique: true });
       await (await col('empAccounts')).createIndex({ emailNorm: 1 }, { unique: true });
+      await (await col('attachments')).createIndex({ owner: 1, cycleId: 1 });
     },
     async getSecrets() {
       const meta = await col('meta');
@@ -237,6 +244,11 @@ function mongoDriver(uri) {
     async getEmpAccountByEmail(emailNorm) { const a = await (await col('empAccounts')).findOne({ emailNorm }); if (!a) return null; const { _id, ...rest } = a; return rest; },
     async insertEmpAccount(acc) { await (await col('empAccounts')).insertOne({ _id: acc.code, ...acc }); },
     async deleteEmpAccount(code) { await (await col('empAccounts')).deleteOne({ code }); },
+    // ---- evidence attachments (binary stored as base64) ----
+    async insertAttachment(att) { await (await col('attachments')).insertOne({ _id: att.id, ...att }); },
+    async getAttachment(id) { const a = await (await col('attachments')).findOne({ _id: id }); if (!a) return null; const { _id, ...rest } = a; return rest; },
+    async deleteAttachment(id) { await (await col('attachments')).deleteOne({ _id: id }); },
+    async deleteAttachmentsByOwner(owner, cycleId) { await (await col('attachments')).deleteMany(cycleId ? { owner, cycleId } : { owner }); },
     _backupTarget() { return null; } // Mongo data is durable; no local file backup
   };
 }

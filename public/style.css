@@ -457,6 +457,28 @@ ul.rules li::before {
 .evidence { margin-top: 12px; }
 .evidence input { font-size: 13.5px; padding: 9px 12px; }
 
+/* evidence attachments */
+.attachments { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.attach-btn {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  font-size: 12.5px; font-weight: 600; color: var(--navy-700);
+  border: 1.5px dashed var(--line); border-radius: 8px; padding: 7px 12px;
+  transition: border-color .15s var(--ease), color .15s var(--ease), background .15s var(--ease);
+}
+.attach-btn:hover { border-color: var(--copper); color: var(--copper-dark); background: #fdf8f3; }
+.file-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--copper-pale); border: 1px solid #f3cdce; border-radius: 8px;
+  padding: 5px 8px 5px 10px; font-size: 12.5px; color: var(--navy-800); max-width: 100%;
+}
+.file-chip a { color: var(--navy-800); text-decoration: none; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.file-chip a:hover { color: var(--copper-dark); text-decoration: underline; }
+.file-chip .fsz { color: var(--muted); font-weight: 500; font-size: 11px; }
+.file-chip.dl { cursor: pointer; border: 1px solid #f3cdce; font-weight: 600; }
+.file-chip.dl:hover { background: #fbe3e4; }
+.file-x { border: none; background: none; color: var(--muted); cursor: pointer; font-size: 13px; line-height: 1; padding: 2px 3px; border-radius: 5px; }
+.file-x:hover { color: var(--red); background: #fff; }
+
 .wiz-nav { display: flex; justify-content: space-between; gap: 12px; margin-top: 26px; }
 .wiz-nav.forward { justify-content: flex-end; }
 .wiz-nav.forward .btn { min-width: 220px; }

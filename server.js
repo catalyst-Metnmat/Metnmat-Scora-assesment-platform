@@ -599,7 +599,8 @@ async function saveSession(req, res) {
         entry.answer = String(r.answer || '').trim().slice(0, 2000);
         entry.self = null; // subjective answers are scored by HR
       }
-      const hasContent = entry.self != null || (entry.answer != null && entry.answer !== '') || entry.evidence;
+      const hasFiles = draft.ratings[id] && Array.isArray(draft.ratings[id].files) && draft.ratings[id].files.length;
+      const hasContent = entry.self != null || (entry.answer != null && entry.answer !== '') || entry.evidence || hasFiles;
       if (hasContent) draft.ratings[id] = { ...draft.ratings[id], ...entry };
       else delete draft.ratings[id];
     }
@@ -612,6 +613,83 @@ async function saveSession(req, res) {
 }
 app.put('/api/session/:token', wrap(saveSession));
 app.post('/api/session/:token', express.raw({ type: () => true, limit: '2mb' }), wrap(saveSession));
+
+// ---------------------------------------------------------------- evidence attachments
+const MAX_ATT_BYTES = 5 * 1024 * 1024;   // 5 MB per file
+const MAX_ATT_PER_SKILL = 3;
+const ATT_TYPES = {
+  'application/pdf': 1, 'image/png': 1, 'image/jpeg': 1, 'image/webp': 1, 'text/plain': 1,
+  'application/msword': 1,
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 1,
+  'application/vnd.ms-excel': 1,
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 1
+};
+const safeName = n => (String(n || 'file').replace(/[^\w.\- ]+/g, '_').slice(0, 120) || 'file');
+
+// Employee attaches an evidence file to a skill (raw binary body, ?skill= & ?name=).
+app.post('/api/session/:token/attachment', express.raw({ type: () => true, limit: '6mb' }), wrap(async (req, res) => {
+  const draft = await store.getDraftByToken(req.params.token);
+  if (!draft) return res.status(404).json({ error: 'Session not found. Refresh the page.' });
+  const cycles = await store.listCycles();
+  const cycle = cycles.find(c => c.id === draft.cycleId);
+  const access = cycle ? cycleAccess(cycle, draftIdentity(draft)) : { allowed: false };
+  if (!access.allowed || attemptExpired(cycle, draft, access.mode))
+    return res.status(423).json({ error: 'The assessment is closed for editing. Your saved work is intact.' });
+
+  const fw = await makeFwResolver()(draft.cycleId);
+  const skillId = String(req.query.skill || '');
+  const sk = allSkills(fw).find(s => s.id === skillId);
+  if (!sk) return res.status(400).json({ error: 'Unknown question.' });
+
+  const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  if (!buf.length) return res.status(400).json({ error: 'Empty file.' });
+  if (buf.length > MAX_ATT_BYTES) return res.status(413).json({ error: 'File too large — maximum 5 MB.' });
+  const type = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  if (!ATT_TYPES[type]) return res.status(415).json({ error: 'Unsupported type. Allowed: PDF, image, Word, Excel, text.' });
+
+  const existing = (draft.ratings[skillId] && draft.ratings[skillId].files) || [];
+  if (existing.length >= MAX_ATT_PER_SKILL) return res.status(409).json({ error: `Up to ${MAX_ATT_PER_SKILL} files per question.` });
+
+  const name = safeName(req.query.name);
+  const att = { id: newId(), owner: draft.employeeId, cycleId: draft.cycleId, skillId, name, type, size: buf.length, data: buf.toString('base64'), createdAt: new Date().toISOString() };
+  await store.insertAttachment(att);
+  const ref = { id: att.id, name, type, size: att.size };
+  draft.ratings[skillId] = { ...(draft.ratings[skillId] || {}), files: [...existing, ref] };
+  draft.updatedAt = new Date().toISOString();
+  await store.upsertDraft(draft);
+  audit('attachment.added', req, { employee: draft.profile && draft.profile.email, skill: sk.name, name, size: att.size });
+  res.json({ ok: true, file: ref, files: draft.ratings[skillId].files });
+}));
+
+// Employee removes an attached file before submitting.
+app.delete('/api/session/:token/attachment/:id', wrap(async (req, res) => {
+  const draft = await store.getDraftByToken(req.params.token);
+  if (!draft) return res.status(404).json({ error: 'Session not found.' });
+  const att = await store.getAttachment(req.params.id);
+  if (!att || att.owner !== draft.employeeId) return res.status(404).json({ error: 'File not found.' });
+  await store.deleteAttachment(att.id);
+  const r = draft.ratings[att.skillId];
+  if (r && Array.isArray(r.files)) { r.files = r.files.filter(f => f.id !== att.id); if (!r.files.length) delete r.files; }
+  draft.updatedAt = new Date().toISOString();
+  await store.upsertDraft(draft);
+  res.json({ ok: true, files: (draft.ratings[att.skillId] && draft.ratings[att.skillId].files) || [] });
+}));
+
+// Download an evidence file. HR/Director may view any; an employee may view only
+// their own — by their SCORA code (?code=) or active session token (?token=).
+app.get('/api/attachment/:id', wrap(async (req, res) => {
+  const att = await store.getAttachment(req.params.id);
+  if (!att) return res.status(404).json({ error: 'Not found' });
+  let allowed = false;
+  if (await resolveIdentity(req)) allowed = true;                                   // HR / Director
+  else if (req.query.code && String(req.query.code) === att.owner) allowed = true;  // owner by code
+  else if (req.query.token) { const d = await store.getDraftByToken(String(req.query.token)); if (d && d.employeeId === att.owner) allowed = true; }
+  if (!allowed) return res.status(403).json({ error: 'Not authorised to view this file.' });
+  res.setHeader('Content-Type', att.type || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${safeName(att.name)}"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.send(Buffer.from(att.data, 'base64'));
+}));
 
 // Final submission — pulls everything from the autosaved server-side draft
 app.post('/api/submissions', submitLimit, wrap(async (req, res) => {
@@ -642,6 +720,7 @@ app.post('/api/submissions', submitLimit, wrap(async (req, res) => {
       evidence: String(r.evidence || '').trim().slice(0, 500)
     };
     if (r.answer !== undefined && r.answer !== null && r.answer !== '') clean[sk.id].answer = r.answer;
+    if (Array.isArray(r.files) && r.files.length) clean[sk.id].files = r.files.slice(0, MAX_ATT_PER_SKILL);
   }
   const sub = {
     id: newId(), cycleId: cycle.id,
@@ -905,6 +984,7 @@ hr.delete('/drafts/:id', wrap(async (req, res) => {
   const d = drafts.find(x => x.id === req.params.id);
   if (!d) return res.status(404).json({ error: 'Draft not found' });
   await store.deleteDraft(d.id);
+  await store.deleteAttachmentsByOwner(d.employeeId, d.cycleId); // drop the abandoned draft's evidence files
   audit('draft.discarded', req, { employeeId: d.profile.employeeId });
   res.json({ ok: true });
 }));
@@ -1001,6 +1081,7 @@ hr.put('/submissions/:id', wrap(async (req, res) => {
 hr.delete('/submissions/:id', wrap(async (req, res) => {
   const removed = await store.deleteSubmission(req.params.id);
   if (!removed) return res.status(404).json({ error: 'Submission not found' });
+  await store.deleteAttachmentsByOwner(normalizeEmpId(removed.profile.employeeId), removed.cycleId); // remove its evidence files
   audit('submission.deleted', req, { sub: removed.id, employeeId: removed.profile.employeeId });
   res.json({ ok: true });
 }));
