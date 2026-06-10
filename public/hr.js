@@ -68,26 +68,50 @@ async function loadFramework() {
 }
 
 /* ================= main navigation ================= */
+// Director and HR get distinct consoles. The Designer (build assessments) and
+// Cycles & assign (create/assign cycles) are available to BOTH roles.
 function navBar(active) {
   const items = [];
-  if (ROLE === 'admin') items.push(['director', 'Director overview']);
-  items.push(['subs', 'Submissions'], ['dash', 'Analytics'], ['emp', 'Employees'], ['cycles', 'Cycles & windows'], ['settings', 'Settings']);
+  if (ROLE === 'admin') items.push(['director', 'Overview']);
+  items.push(['subs', 'Submissions'], ['dash', 'Analytics'], ['emp', 'Employees'],
+    ['cycles', 'Cycles & assign'], ['designer', 'Designer']);
+  if (ROLE === 'admin') items.push(['users', 'Users']);
+  items.push(['settings', 'Settings']);
+  const console = ROLE === 'admin' ? 'Director Console' : 'HR Console';
   return `<nav class="subnav" aria-label="Dashboard sections">
+    <span class="subnav-role">${console}</span>
     ${items.map(([k, l]) => `<button class="${active === k ? 'on' : ''}" data-nav="${k}">${l}</button>`).join('')}
-    <a class="subnav-link" href="/admin">Assessment designer ↗</a>
   </nav>`;
 }
 function bindNav() {
   app.querySelectorAll('[data-nav]').forEach(b => b.onclick = () => showView(b.dataset.nav));
 }
+function setConsoleSubtitle() {
+  const el = document.querySelector('.brand small');
+  if (el) el.textContent = ROLE === 'admin' ? 'Director Console' : 'HR Console';
+}
 function showView(v) {
+  setConsoleSubtitle();
   if (v === 'subs') renderList();
   else if (v === 'dash') renderDashboard();
   else if (v === 'emp') renderEmployeesView();
   else if (v === 'cycles') renderCyclesView();
+  else if (v === 'designer') renderDesigner();
   else if (v === 'settings') renderSettings();
   else if (v === 'director') renderDirector();
   else if (v === 'users') renderUsers();
+}
+
+/* ================= embedded assessment designer (both roles) ================= */
+function renderDesigner() {
+  app.innerHTML = `${navBar('designer')}
+    <div class="list-head">
+      <div><h1>Assessment Designer</h1>
+      <p class="sub" style="margin-bottom:0">Build and edit the assessment — categories, skills, scale, bands, weights, and Excel/PDF import. To run it, create a cycle and target it under <b>Cycles &amp; assign</b>.</p></div>
+      <div class="actions"><a class="btn ghost small" href="/admin" target="_blank" rel="noopener">Open full screen ↗</a></div>
+    </div>
+    <iframe class="designer-frame" src="/admin?embed=1" title="Assessment Designer"></iframe>`;
+  bindNav();
 }
 
 /* ================= named user management (Director only) ================= */
@@ -352,8 +376,6 @@ async function renderSettings() {
       <div><h1>Settings</h1>
       <p class="sub" style="margin-bottom:0">${who}Scoring weights, audit trail and session.</p></div>
       <div class="actions">
-        ${ROLE === 'admin' ? '<button class="btn small" id="usersBtn">Manage users</button>' : ''}
-        <a class="btn secondary small" href="/admin">Assessment designer</a>
         <button class="btn ghost small" id="lockBtn" title="Sign out on this device">Sign out</button>
       </div>
     </div>
@@ -361,7 +383,6 @@ async function renderSettings() {
     <div id="panel2"></div>`;
   bindNav();
   document.getElementById('lockBtn').onclick = lock;
-  if (ROLE === 'admin') document.getElementById('usersBtn').onclick = () => showView('users');
   await renderWeightsPanel();
   const events = await api('/api/hr/audit').catch(() => []);
   const rows = events.map(e => `
@@ -1180,6 +1201,6 @@ async function renderDetail(id) {
 
 if (AUTH) {
   api('/api/hr/whoami')
-    .then(who => { ROLE = who.role; if (AUTH) { AUTH.role = who.role; AUTH.name = who.name; } showView(ROLE === 'admin' ? 'director' : 'subs'); })
+    .then(who => { ROLE = who.role; if (AUTH) { AUTH.role = who.role; AUTH.name = who.name; } setConsoleSubtitle(); showView(ROLE === 'admin' ? 'director' : 'subs'); })
     .catch(() => {});  // api() handles a dead credential by showing the login
 } else renderLogin();

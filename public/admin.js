@@ -5,6 +5,9 @@
  * Edits a working copy in memory; "Save changes" PUTs the whole framework. */
 const app = document.getElementById('app');
 const AUTH_STORE = 'scora-auth';   // shared with the HR/Director dashboard
+// when embedded as a tab inside the dashboard (/admin?embed=1), hide our own chrome
+const EMBED = new URLSearchParams(location.search).has('embed');
+if (EMBED) document.body.classList.add('embed');
 let AUTH = loadAuth();
 let ROLE = AUTH ? AUTH.role : 'hr';   // 'admin' (director) or 'hr'
 let FW = null;        // working copy
@@ -485,7 +488,8 @@ async function save() {
   }
 }
 
-window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+// guard unsaved edits — but not when embedded (the parent dashboard owns navigation)
+if (!EMBED) window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
 
 if (AUTH) {
   Promise.all([api('/api/hr/whoami'), api('/api/admin/framework')])

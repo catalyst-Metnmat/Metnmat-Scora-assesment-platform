@@ -487,6 +487,21 @@ ul.rules li::before {
   text-decoration: none; padding: 9px 14px; border-radius: 9px; white-space: nowrap;
 }
 .subnav-link:hover { background: var(--copper-pale); }
+.subnav-role {
+  font-family: var(--font-head); font-size: 11px; font-weight: 700; letter-spacing: 1.4px;
+  text-transform: uppercase; color: #fff; background: var(--navy-800);
+  padding: 7px 13px; border-radius: 8px; margin-right: 4px; white-space: nowrap;
+}
+
+/* embedded designer (inside HR/Director dashboard) */
+.designer-frame {
+  width: 100%; height: calc(100vh - 230px); min-height: 560px;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--card); box-shadow: var(--shadow);
+}
+body.embed { background: #fff; }
+body.embed .topbar { display: none; }
+body.embed main.wrap { padding-top: 10px; padding-bottom: 24px; }
 @media (max-width: 700px) {
   .subnav { border-radius: 12px; }
   .subnav button { padding: 8px 11px; font-size: 12.5px; }
