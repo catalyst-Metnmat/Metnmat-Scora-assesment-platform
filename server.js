@@ -220,6 +220,7 @@ app.use((req, res, next) => {
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
     'Referrer-Policy': 'same-origin',
+    'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
     'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
   });
   next();
@@ -1236,6 +1237,7 @@ async function buildDashboardData(cycleId) {
     bandDist, leaderboard, domainBoards, departments, histogram,
     gaps: subs.length ? [...skillAvgs].sort((a, b) => a.avg - b.avg).slice(0, 10) : [],
     strengths: subs.length ? [...skillAvgs].sort((a, b) => b.avg - a.avg).slice(0, 10) : [],
+    allSkillAvgs: skillAvgs, // full per-skill company averages (used by the Skill-Gap & Matrix reports)
     overClaim, underClaim
   };
 }
@@ -1246,6 +1248,28 @@ hr.get('/dashboard', wrap(async (req, res) => res.json(await buildDashboardData(
 hr.get('/report.pdf', wrap(async (req, res) => {
   const dash = await buildDashboardData(req.query.cycleId);
   await reports.executiveSummary(res, { dash, cycleName: dash.cycleName });
+}));
+
+// Dedicated analytical reports (all reuse the dashboard data bundle + framework)
+hr.get('/report/departments.pdf', wrap(async (req, res) => {
+  const dash = await buildDashboardData(req.query.cycleId);
+  await reports.departmentReport(res, { dash, cycleName: dash.cycleName, fw: await store.getFramework() });
+  audit('report.departments', req, { cycle: dash.cycleName });
+}));
+hr.get('/report/skill-gap.pdf', wrap(async (req, res) => {
+  const dash = await buildDashboardData(req.query.cycleId);
+  await reports.skillGapReport(res, { dash, cycleName: dash.cycleName, fw: await store.getFramework() });
+  audit('report.skillGap', req, { cycle: dash.cycleName });
+}));
+hr.get('/report/competency-matrix.pdf', wrap(async (req, res) => {
+  const dash = await buildDashboardData(req.query.cycleId);
+  await reports.competencyMatrix(res, { dash, cycleName: dash.cycleName, fw: await store.getFramework() });
+  audit('report.competencyMatrix', req, { cycle: dash.cycleName });
+}));
+hr.get('/report/hr-evaluation.pdf', wrap(async (req, res) => {
+  const dash = await buildDashboardData(req.query.cycleId);
+  await reports.hrEvaluationReport(res, { dash, cycleName: dash.cycleName, fw: await store.getFramework() });
+  audit('report.hrEvaluation', req, { cycle: dash.cycleName });
 }));
 
 // Per-employee assessment report PDF

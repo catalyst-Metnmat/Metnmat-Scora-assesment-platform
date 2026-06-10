@@ -457,6 +457,23 @@ ul.rules li::before {
 .evidence { margin-top: 12px; }
 .evidence input { font-size: 13.5px; padding: 9px 12px; }
 
+/* reports dropdown (HR analytics) */
+.report-menu { position: relative; display: inline-block; }
+.report-menu > summary { list-style: none; cursor: pointer; user-select: none; }
+.report-menu > summary::-webkit-details-marker { display: none; }
+.report-menu-list {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 30;
+  background: var(--card); border: 1px solid var(--line); border-radius: 11px;
+  box-shadow: var(--shadow-lg); padding: 6px; min-width: 230px;
+  display: flex; flex-direction: column; gap: 2px; animation: fadeUp .18s var(--ease) both;
+}
+.rep-link {
+  text-align: left; border: none; background: none; cursor: pointer;
+  font: inherit; font-size: 13.5px; color: var(--ink); font-weight: 500;
+  padding: 9px 12px; border-radius: 8px; transition: background .14s, color .14s;
+}
+.rep-link:hover { background: var(--copper-pale); color: var(--copper-dark); }
+
 /* evidence attachments */
 .attachments { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .attach-btn {

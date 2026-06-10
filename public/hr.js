@@ -1013,7 +1013,16 @@ async function renderDashboard() {
         <h1>Analytics Dashboard <span class="muted" style="font-size:15px;font-family:var(--font-body);font-weight:500">· ${esc(dash.cycleName)}</span></h1>
       </div>
       <div class="actions">
-        <button class="btn ghost small" id="execPdf">Executive summary PDF</button>
+        <details class="report-menu">
+          <summary class="btn ghost small">Reports &#9662;</summary>
+          <div class="report-menu-list">
+            <button class="rep-link" data-rep="report.pdf" data-fn="executive_summary">Executive summary</button>
+            <button class="rep-link" data-rep="report/departments.pdf" data-fn="department_performance">Department performance</button>
+            <button class="rep-link" data-rep="report/skill-gap.pdf" data-fn="skill_gap">Skill gap analysis</button>
+            <button class="rep-link" data-rep="report/competency-matrix.pdf" data-fn="competency_matrix">Competency matrix</button>
+            <button class="rep-link" data-rep="report/hr-evaluation.pdf" data-fn="hr_evaluation">HR evaluation</button>
+          </div>
+        </details>
         <button class="btn ghost small" id="exportXlsxDash">Export Excel</button>
         <button class="btn ghost small" id="exportAll">Export CSV</button>
       </div>
@@ -1074,8 +1083,12 @@ async function renderDashboard() {
     downloadCsv('/api/hr/export.csv' + (currentCycleFilter ? `?cycleId=${currentCycleFilter}` : ''), 'METNMAT_assessments.csv');
   document.getElementById('exportXlsxDash').onclick = () =>
     downloadCsv('/api/hr/export.xlsx' + (currentCycleFilter ? `?cycleId=${currentCycleFilter}` : ''), 'METNMAT_assessment_data.xlsx');
-  document.getElementById('execPdf').onclick = () =>
-    downloadCsv('/api/hr/report.pdf' + (currentCycleFilter ? `?cycleId=${currentCycleFilter}` : ''), 'METNMAT_executive_summary.pdf');
+  app.querySelectorAll('.rep-link').forEach(b => b.onclick = () => {
+    const q = currentCycleFilter ? `?cycleId=${currentCycleFilter}` : '';
+    downloadCsv('/api/hr/' + b.dataset.rep + q, `METNMAT_${b.dataset.fn}.pdf`);
+    const menu = b.closest('.report-menu'); if (menu) menu.open = false;
+    toast('Preparing your report…');
+  });
   app.querySelectorAll('.tab').forEach(b => b.onclick = () => { currentCycleFilter = b.dataset.cyc; renderDashboard(); });
   app.querySelectorAll('tr.clickable, .podium-row.clickable').forEach(el => el.onclick = () => renderDetail(el.dataset.id));
   window.scrollTo(0, 0);

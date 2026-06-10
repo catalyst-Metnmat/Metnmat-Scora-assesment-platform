@@ -10,8 +10,8 @@ const NAVY = '#0a1628', RED = '#c01d22', MUTED = '#5d6b7a', LINE = '#e3e8ee', IN
 
 // Build the whole PDF into a buffer first, then send — a drawing error can
 // never produce a half-written response or crash the process.
-function start(title) {
-  const doc = new PDFDocument({ size: 'A4', margin: 48, bufferPages: true, info: { Title: title, Author: 'METNMAT Innovations Pvt. Ltd.' } });
+function start(title, landscape = false) {
+  const doc = new PDFDocument({ size: 'A4', layout: landscape ? 'landscape' : 'portrait', margin: 48, bufferPages: true, info: { Title: title, Author: 'METNMAT Innovations Pvt. Ltd.' } });
   doc._buffered = new Promise((resolve, reject) => {
     const chunks = [];
     doc.on('data', c => chunks.push(c));
@@ -45,10 +45,11 @@ async function finish(doc, res, filename, confidential = true) {
 function h2(doc, text) {
   if (doc.y > doc.page.height - 120) doc.addPage();
   doc.moveDown(0.6);
-  doc.fill(RED).font('Helvetica-Bold').fontSize(8).text(text.toUpperCase(), { characterSpacing: 1.5 });
+  // anchor at the left margin + full width — tables/bars leave doc.x mid-row otherwise
+  doc.fill(RED).font('Helvetica-Bold').fontSize(8).text(text.toUpperCase(), 48, doc.y, { characterSpacing: 1.5, width: doc.page.width - 96 });
   doc.moveTo(48, doc.y + 2).lineTo(120, doc.y + 2).strokeColor(RED).lineWidth(1.5).stroke();
   doc.moveDown(0.5);
-  doc.fill(INK);
+  doc.x = 48; doc.fill(INK);
 }
 
 function kv(doc, pairs, cols = 2) {
@@ -69,8 +70,9 @@ function table(doc, headers, rows, widths) {
   const drawHead = () => {
     doc.font('Helvetica-Bold').fontSize(7.5).fill(MUTED);
     let x = x0;
-    headers.forEach((h, i) => { doc.text(String(h).toUpperCase(), x, doc.y, { width: ws[i] - 6, continued: false, lineBreak: false }); x += ws[i]; });
-    doc.moveDown(0.9);
+    const hy = doc.y; // all header cells share one baseline — don't let doc.y drift per cell
+    headers.forEach((h, i) => { doc.text(String(h).toUpperCase(), x, hy, { width: ws[i] - 6, continued: false, lineBreak: false }); x += ws[i]; });
+    doc.x = x0; doc.y = hy; doc.moveDown(0.9);
     doc.moveTo(x0, doc.y - 3).lineTo(x0 + totalW, doc.y - 3).strokeColor(LINE).lineWidth(0.75).stroke();
   };
   drawHead();
@@ -182,4 +184,138 @@ async function executiveSummary(res, { dash, cycleName }) {
   await finish(doc, res, 'METNMAT_executive_summary.pdf');
 }
 
-module.exports = { employeeReport, executiveSummary };
+// ---------------------------------------------------------------- Department Performance Report
+async function departmentReport(res, { dash, cycleName, fw }) {
+  const doc = start('Department Performance Report');
+  const codes = dash.domainBoards.map(d => d.code);
+  h2(doc, 'Cycle: ' + cycleName);
+  doc.font('Helvetica').fontSize(9).fill(MUTED).text(`${dash.departments.length} department(s) · ${dash.totals.submissions} submission(s). Scores use validated ratings where available, else self-ratings.`);
+  doc.moveDown(0.5);
+
+  h2(doc, 'Department ranking');
+  table(doc, ['Department', 'Employees', 'Avg score', 'Top performer', 'Band mix'],
+    dash.departments.map(dep => {
+      const ppl = dash.leaderboard.filter(p => p.department === dep.name);
+      const top = ppl[0] ? `${ppl[0].name} (${ppl[0].rankScore})` : '—';
+      const bands = {}; ppl.forEach(p => { const b = p.band || p.provisionalBand || '—'; bands[b] = (bands[b] || 0) + 1; });
+      const mix = Object.entries(bands).map(([b, n]) => `${b}: ${n}`).join(', ');
+      return [dep.name, dep.count, dep.avg ?? '—', top, mix];
+    }), [0.24, 0.12, 0.12, 0.28, 0.24]);
+
+  // per-department domain breakdown
+  for (const dep of dash.departments) {
+    const ppl = dash.leaderboard.filter(p => p.department === dep.name);
+    if (!ppl.length) continue;
+    const domAvg = codes.map(code => {
+      const vals = ppl.map(p => p.domains[code]).filter(v => v != null);
+      return { code, avg: vals.length ? +(vals.reduce((s, v) => s + v, 0) / vals.length).toFixed(2) : null };
+    });
+    const ranked = [...domAvg].filter(d => d.avg != null).sort((a, b) => a.avg - b.avg);
+    h2(doc, `${dep.name} — ${dep.count} employee(s), avg ${dep.avg ?? '—'}`);
+    if (ranked.length) {
+      const weakest = ranked.slice(0, 3).map(d => `${d.code} (${d.avg})`).join(', ');
+      const strongest = ranked.slice(-3).reverse().map(d => `${d.code} (${d.avg})`).join(', ');
+      kv(doc, [['Weakest domains', weakest], ['Strongest domains', strongest]], 2);
+    }
+    table(doc, ['#', 'Employee', 'Score', 'Band', 'Status'],
+      ppl.map((p, i) => [i + 1, p.name, p.rankScore, p.band || p.provisionalBand || '—', p.status === 'validated' ? 'Validated' : 'Pending']),
+      [0.07, 0.45, 0.16, 0.18, 0.14]);
+  }
+  await finish(doc, res, 'METNMAT_department_performance.pdf');
+}
+
+// ---------------------------------------------------------------- Skill Gap Report
+async function skillGapReport(res, { dash, cycleName, fw }) {
+  const doc = start('Skill Gap Report');
+  const GAP = 2.5; // below this = priority gap
+  h2(doc, 'Cycle: ' + cycleName);
+  doc.font('Helvetica').fontSize(9).fill(MUTED).text(`Company-wide skill proficiency (0–5), lowest first. Skills below ${GAP.toFixed(1)} are flagged as training priorities. Based on ${dash.totals.submissions} submission(s).`);
+  doc.moveDown(0.5);
+
+  // domain-level gap summary (ascending by company proficiency)
+  h2(doc, 'Domain gap summary');
+  const domRanked = [...dash.domainBoards]
+    .map(d => ({ code: d.code, name: d.name, avg: d.avgValidated != null ? d.avgValidated : d.avgSelf }))
+    .filter(d => d.avg != null).sort((a, b) => a.avg - b.avg);
+  table(doc, ['Domain', 'Company avg', 'Gap to 5.0'],
+    domRanked.map(d => [`${d.code} — ${d.name}`, d.avg, (5 - d.avg).toFixed(2)]), [0.6, 0.2, 0.2]);
+
+  // lowest skills (training priorities)
+  const skills = (dash.allSkillAvgs || []).slice().sort((a, b) => a.avg - b.avg);
+  const priorities = skills.filter(s => s.avg < GAP);
+  h2(doc, `Priority skill gaps — ${priorities.length} skill(s) below ${GAP.toFixed(1)}`);
+  if (priorities.length) {
+    table(doc, ['Skill', 'Domain', 'Company avg', 'Gap to 5.0'],
+      priorities.slice(0, 40).map(s => [`${s.sno}. ${s.name}`, s.domain, s.avg, (5 - s.avg).toFixed(2)]), [0.5, 0.14, 0.18, 0.18]);
+    if (priorities.length > 40) doc.font('Helvetica-Oblique').fontSize(8).fill(MUTED).text(`…and ${priorities.length - 40} more below ${GAP.toFixed(1)}.`, 48, doc.y, { width: doc.page.width - 96 });
+  } else {
+    doc.font('Helvetica').fontSize(9.5).fill(INK).text('No skills fall below the priority threshold — proficiency is broadly healthy.');
+  }
+
+  h2(doc, 'Lowest 20 skills overall');
+  table(doc, ['Skill', 'Domain', 'Company avg'],
+    skills.slice(0, 20).map(s => [`${s.sno}. ${s.name}`, s.domain, s.avg]), [0.64, 0.14, 0.22]);
+  await finish(doc, res, 'METNMAT_skill_gap.pdf');
+}
+
+// ---------------------------------------------------------------- Competency Matrix (employees × domains)
+async function competencyMatrix(res, { dash, cycleName, fw }) {
+  const doc = start('Competency Matrix', true); // landscape — many domain columns
+  const codes = dash.domainBoards.map(d => d.code);
+  h2(doc, 'Cycle: ' + cycleName);
+  doc.font('Helvetica').fontSize(9).fill(MUTED).text('Per-employee proficiency by competency domain (0–5; validated where available, else self). Domain key below.');
+  doc.moveDown(0.3);
+  doc.font('Helvetica').fontSize(7.5).fill(INK).text(dash.domainBoards.map(d => `${d.code}=${d.name}`).join('   ·   '), { width: doc.page.width - 96 });
+  doc.moveDown(0.5);
+
+  const nameW = 0.20, scoreW = 0.06;
+  const widths = [nameW].concat(codes.map(() => (1 - nameW) / codes.length));
+  const rows = dash.leaderboard.map(p => [p.name].concat(codes.map(c => p.domains[c] != null ? p.domains[c].toFixed(1) : '·')));
+  // company average row
+  const compRow = ['COMPANY AVG'].concat(codes.map(c => {
+    const vals = dash.leaderboard.map(p => p.domains[c]).filter(v => v != null);
+    return vals.length ? (vals.reduce((s, v) => s + v, 0) / vals.length).toFixed(1) : '·';
+  }));
+  h2(doc, `Matrix — ${rows.length} employee(s) × ${codes.length} domains`);
+  table(doc, ['Employee'].concat(codes), rows.concat([compRow]), widths);
+  await finish(doc, res, 'METNMAT_competency_matrix.pdf');
+}
+
+// ---------------------------------------------------------------- HR Evaluation Report
+async function hrEvaluationReport(res, { dash, cycleName, fw }) {
+  const doc = start('HR Evaluation Report');
+  const t = dash.totals;
+  h2(doc, 'Cycle: ' + cycleName);
+  kv(doc, [['Submissions', t.submissions], ['Validated', t.validated], ['Pending evaluation', t.pending],
+    ['Avg turnaround', t.avgValidationDays != null ? t.avgValidationDays + ' days' : '—'],
+    ['Avg self-inflation (Δ)', t.avgClaimDelta ?? '—'], ['Evidence coverage', t.avgEvidencePct != null ? Math.round(t.avgEvidencePct) + '%' : '—']], 3);
+
+  const pending = dash.leaderboard.filter(p => p.status !== 'validated');
+  h2(doc, `Pending evaluations — ${pending.length}`);
+  if (pending.length) {
+    const now = Date.now();
+    table(doc, ['Employee', 'Department', 'Submitted', 'Waiting'],
+      pending.map(p => [p.name, p.department, (p.submittedAt || '').slice(0, 10),
+        p.submittedAt ? Math.round((now - new Date(p.submittedAt)) / 86400000) + ' d' : '—']), [0.34, 0.26, 0.20, 0.20]);
+  } else doc.font('Helvetica').fontSize(9.5).fill(INK).text('All submissions have been validated.');
+
+  if ((dash.overClaim || []).length) {
+    h2(doc, 'Highest self-inflation (self > validated)');
+    table(doc, ['Employee', 'Department', 'Self', 'Validated', 'Δ'],
+      dash.overClaim.map(p => [p.name, p.department, p.overallSelf ?? '—', p.overallValidated ?? '—', '+' + p.claimDelta]), [0.30, 0.26, 0.14, 0.16, 0.14]);
+  }
+  if ((dash.underClaim || []).length) {
+    h2(doc, 'Most under-claimed (validated > self)');
+    table(doc, ['Employee', 'Department', 'Self', 'Validated', 'Δ'],
+      dash.underClaim.map(p => [p.name, p.department, p.overallSelf ?? '—', p.overallValidated ?? '—', p.claimDelta]), [0.30, 0.26, 0.14, 0.16, 0.14]);
+  }
+
+  h2(doc, 'Evaluation summary (all employees)');
+  table(doc, ['Employee', 'Dept', 'Self', 'Validated', 'Δ', 'Evidence', 'Status'],
+    dash.leaderboard.map(p => [p.name, p.department, p.weightedSelf ?? '—', p.weightedValidated ?? '—',
+      p.claimDelta == null ? '—' : (p.claimDelta > 0 ? '+' : '') + p.claimDelta, p.evidencePct + '%',
+      p.status === 'validated' ? 'Validated' : 'Pending']), [0.24, 0.18, 0.11, 0.13, 0.10, 0.12, 0.12]);
+  await finish(doc, res, 'METNMAT_hr_evaluation.pdf');
+}
+
+module.exports = { employeeReport, executiveSummary, departmentReport, skillGapReport, competencyMatrix, hrEvaluationReport };

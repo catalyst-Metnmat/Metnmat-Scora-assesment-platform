@@ -51,7 +51,7 @@
 | # | Item | Status | Notes |
 |---|------|--------|-------|
 | 1 | Email actually delivering | **Blocked (config)** | Code is complete; Resend rejects until `metnmat.com` is verified in the key's account. **Action: verify domain / use the verified-account key.** |
-| 2 | Dedicated **Department Performance**, **Skill-Gap**, **Competency Matrix**, **HR Evaluation** reports as standalone PDFs | **Partial** | All this data exists in the HR dashboard + 5-sheet Excel; only *Employee Report* and *Executive Summary* exist as dedicated PDFs. |
+| 2 | Dedicated **Department Performance**, **Skill-Gap**, **Competency Matrix**, **HR Evaluation** reports as standalone PDFs | **✔ Done** | Added as branded PDFs (HR → Analytics → Reports ▾), alongside Employee Report & Executive Summary. All six now exist. |
 | 3 | Attachment download on `/my` (employee self-view of own files) | **Partial** | Employees can view/remove files during the assessment; `/my` is an aggregate dashboard with no per-answer view. |
 | 4 | Anti-virus / content scanning of uploads | **Missing** | Uploads are validated by MIME type, size (5 MB), and count (3); no malware scanning. |
 | 5 | Automated database backups | **Missing (ops)** | Atlas M0 free tier has no auto-backup; needs a scheduled `mongodump`/export. File driver keeps daily local backups. |
@@ -67,7 +67,7 @@
 |----------|-----|----------------|
 | **High (ops)** | Secrets (`MONGODB_URI`, `ADMIN_KEY`, `HR_KEY`) appeared in chat during development | **Rotate all three** before public rollout; set them only in the Render dashboard. |
 | Medium | SCORA codes stored **plaintext** in Mongo | Low entropy (10 000 space) so hashing adds little, but consider hashing + lookup-by-hash, or accept as a low-value credential. They are already masked from all HR surfaces. |
-| Medium | No **HSTS** header | Add `Strict-Transport-Security` (Render terminates TLS; safe to enable). |
+| ✔ Fixed | ~~No **HSTS** header~~ | `Strict-Transport-Security: max-age=31536000; includeSubDomains` now sent on every response. |
 | Medium | Uploads not malware-scanned | Add ClamAV / a scanning service if employees upload untrusted files; today limited by type/size/count + `nosniff` + `Content-Disposition: attachment`. |
 | Low | Rate-limiting is per-process in-memory | Fine for single instance; move to a shared store if scaling horizontally. |
 | Low | `?code=` in attachment download URL (employee self-view) | Lands in browser history; it's the employee's own code. Acceptable; could switch to a short-lived signed token. |
@@ -106,9 +106,9 @@
 
 ## 7. Reporting Gaps
 
-- ✔ Present: Employee Assessment Report (PDF), Executive Summary (PDF), per-employee & per-cycle CSV, 5-sheet Excel (Summary, Skill detail, Leaderboard, Domain averages, Framework).
-- ✖ Not yet as **dedicated PDF**: Department Performance, Skill-Gap, Competency Matrix, HR Evaluation report. *(All derivable from the dashboard/Excel today.)*
-- Recommendation: add these four to `reports.js` (the PDF helpers — `table`, `bar`, `kv` — already exist) for one-click board-ready exports.
+- ✔ **All six spec reports now exist as PDFs**: Employee Assessment, Executive Summary, **Department Performance**, **Skill-Gap**, **Competency Matrix** (landscape), **HR Evaluation** — plus per-employee & per-cycle CSV and the 5-sheet Excel workbook. Triggered from HR → Analytics → **Reports ▾**, cycle-filter-aware, branded, paginated, confidential-footed.
+- Fixed in the same pass: a latent `table()` header-row staircase bug that affected every PDF (headers now sit on one baseline).
+- Remaining nicety: Excel variants of the four new analytical reports (the 5-sheet workbook already carries the underlying data).
 
 ---
 
@@ -139,12 +139,12 @@
 | Evaluation & scoring | 97 |
 | Evidence & attachments | 92 |
 | Analytics | 90 |
-| Reporting | 82 |
-| Security | 88 |
+| Reporting | 95 |
+| Security | 90 |
 | Scalability | 85 |
 | Data integrity (snapshots/audit) | 96 |
 | Ops (email live, backups, secrets) | 72 |
-| **Overall (deployed purpose)** | **≈ 93 / 100** |
+| **Overall (deployed purpose)** | **≈ 94 / 100** |
 
 ### Blocking items before go-live (must do)
 1. **Rotate** `MONGODB_URI` password, `ADMIN_KEY`, `HR_KEY`; set them only in Render env vars.
@@ -154,8 +154,8 @@
 5. Establish a **weekly Atlas export/backup** habit (M0 has no auto-backup).
 
 ### Recommended soon (non-blocking)
-- Add the four dedicated PDF reports (§7).
-- Add HSTS header; consider hashing SCORA codes.
+- ~~Add the four dedicated PDF reports~~ ✔ done · ~~Add HSTS header~~ ✔ done.
+- Consider hashing SCORA codes; add malware scanning if uploads come from untrusted users.
 - Move many/large attachments to object storage if file usage grows.
 - Hide the legacy Designer "Profile fields" tab.
 
