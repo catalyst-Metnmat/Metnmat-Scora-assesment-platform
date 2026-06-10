@@ -819,14 +819,15 @@ hr.get('/export.xlsx', wrap(async (req, res) => {
 
 app.use('/api/hr', hr);
 
-// ---------------------------------------------------------------- ADMIN API (full content control)
+// ---------------------------------------------------------------- DESIGNER + GOVERNANCE API
+// Role model: HR conducts the assessment — designer + import are HR-level
+// (the Director/admin key also passes). Key management stays Director-only.
 const admin = express.Router();
-admin.use(adminAuth);
 
-admin.get('/framework', wrap(async (_req, res) => res.json(await store.getFramework())));
+admin.get('/framework', hrAuth, wrap(async (_req, res) => res.json(await store.getFramework())));
 
-// Replace the whole framework (the admin editor sends the edited copy). Validated server-side.
-admin.put('/framework', wrap(async (req, res) => {
+// Replace the whole framework (the designer sends the edited copy). Validated server-side.
+admin.put('/framework', hrAuth, wrap(async (req, res) => {
   const fw = req.body || {};
   const err = validateFramework(fw);
   if (err) return res.status(400).json({ error: err });
@@ -849,13 +850,13 @@ admin.put('/framework', wrap(async (req, res) => {
   fw.title = String(fw.title || '').trim().slice(0, 160);
   fw.tagline = String(fw.tagline || '').trim().slice(0, 200);
   await store.saveFramework(fw);
-  audit('framework.updated', req, { domains: fw.domains.length, skills: allSkills(fw).length });
+  audit('framework.updated', req, { domains: fw.domains.length, skills: allSkills(fw).length, by: req.isAdmin ? 'director' : 'hr' });
   res.json({ ok: true, framework: fw });
 }));
 
-// key management — admin can rotate their own key and reset HR's key any time.
+// key management — Director-only: rotate the director key and reset HR's key.
 // Runtime keys override the ADMIN_KEY / HR_KEY environment variables.
-admin.put('/keys', wrap(async (req, res) => {
+admin.put('/keys', adminAuth, wrap(async (req, res) => {
   const { role, key } = req.body || {};
   if (!['admin', 'hr'].includes(role)) return res.status(400).json({ error: 'role must be "admin" or "hr"' });
   const k = String(key || '').trim();
@@ -929,7 +930,7 @@ function classifyPdfLines(text) {
   return classifyRows(rows);
 }
 
-admin.post('/import', express.raw({ type: () => true, limit: '20mb' }), wrap(async (req, res) => {
+admin.post('/import', hrAuth, express.raw({ type: () => true, limit: '20mb' }), wrap(async (req, res) => {
   const buf = req.body;
   if (!Buffer.isBuffer(buf) || buf.length < 8) return res.status(400).json({ error: 'No file received' });
   const filename = String(req.headers['x-filename'] || 'file');
@@ -1052,8 +1053,9 @@ function start() {
       const { adminKey, hrKey } = await store.getSecrets();
       const cycles = await store.listCycles();
       const open = cycles.find(c => c.status === 'open');
-      console.log(`Admin panel:  /admin   key: ${adminKey}`);
-      console.log(`HR dashboard: /hr      key: ${hrKey}`);
+      console.log(`Designer (/admin):     HR key or Director key`);
+      console.log(`HR dashboard (/hr):    hr key: ${hrKey}`);
+      console.log(`Director (oversight + key management): admin key: ${adminKey}`);
       console.log(`Active cycle: ${open ? open.name : 'NONE — open one from the Admin or HR dashboard'}`);
     } catch (e) {
       console.error('!! STORAGE NOT READY:', e.message);

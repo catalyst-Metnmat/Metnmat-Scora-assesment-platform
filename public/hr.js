@@ -124,6 +124,7 @@ async function renderList() {
       </div>
       <div class="actions">
         <button class="btn small" id="cycleBtn">Manage cycles</button>
+        <a class="btn secondary small" href="/admin">Assessment designer</a>
         <button class="btn ghost small" id="weightsBtn">Domain weights</button>
         <button class="btn ghost small" id="auditBtn">Audit log</button>
         <button class="btn ghost small" id="lockBtn" title="Forget the key on this device">Lock</button>

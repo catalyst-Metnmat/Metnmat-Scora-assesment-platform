@@ -8,11 +8,11 @@ Production portal for the METNMAT Innovations Pvt. Ltd. proficiency-based compen
 
 | Page | Who | What they do |
 |---|---|---|
-| `/` → `/assessment` | Employees | Self-assess (no login). One submission per employee per cycle. |
-| `/hr` | HR | Validate submissions, manage cycles, analytics, CSV exports. |
-| `/admin` | Admin | **Full content control** — add/edit/delete categories & skills, edit the scale, bands, weights, and profile fields. Plus everything HR can do. |
+| `/` → `/assessment` | Employees | Self-assess (session-based, auto-saved, resumable). One submission per employee per cycle. |
+| `/hr` | HR | **Conducts the assessment**: cycles & windows, exceptions, validation interviews, analytics dashboard, exports. |
+| `/admin` | HR (+ Directors) | **Assessment Designer** — add/edit/delete categories & skills, edit the scale, bands, weights, profile fields, import from Excel/PDF. Opens with the HR key. |
 
-There are **two keys**: `ADMIN_KEY` (full power) and `HR_KEY` (validation only). The admin key also works on the HR dashboard.
+There are **two keys**: `HR_KEY` (HR — designs and conducts the assessment) and `ADMIN_KEY` (**company Directors** — full oversight of everything HR can see and do, plus key management: resetting the HR key and rotating their own from the designer's *Access & security* tab).
 
 ---
 

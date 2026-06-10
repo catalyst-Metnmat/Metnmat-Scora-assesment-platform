@@ -1,9 +1,12 @@
-/* Admin — Assessment Designer. Full control over the framework:
- * categories (domains), skills, proficiency scale, bands, weights, profile fields.
+/* Assessment Designer — full control over the framework: categories (domains),
+ * skills, proficiency scale, bands, weights, profile fields, import/export.
+ * Opens with the HR key (HR conducts the assessment) or the Director key.
+ * The "Access & security" tab (key management) is Director-only.
  * Edits a working copy in memory; "Save changes" PUTs the whole framework. */
 const app = document.getElementById('app');
 const KEY_STORE = 'metnmat-admin-key';
 let adminKey = sessionStorage.getItem(KEY_STORE) || localStorage.getItem(KEY_STORE) || '';
+let ROLE = 'hr';      // 'admin' (director) or 'hr' — set after login
 let FW = null;        // working copy
 let tab = 'skills';
 let dirty = false;
@@ -30,18 +33,24 @@ async function api(path, opts = {}) {
 function renderLogin(msg) {
   app.innerHTML = `
     <div class="card login-card">
-      <h2>Admin Access</h2>
-      <p class="muted" style="margin-bottom:14px">Enter the <b>Admin</b> key (full content control). Printed in the server console at startup, or set as <code>ADMIN_KEY</code>.</p>
-      <label for="keyIn">Admin key</label>
+      <h2>Assessment Designer</h2>
+      <p class="muted" style="margin-bottom:14px">Enter the <b>HR key</b> to design and manage the assessment (categories, skills, scale, bands, import/export). Company <b>Directors</b> can use their key for full oversight including key management.</p>
+      <label for="keyIn">HR or Director key</label>
       <input type="password" id="keyIn" autocomplete="off">
       <label class="agree-row"><input type="checkbox" id="remember"> Remember on this device</label>
       ${msg ? `<div class="error-msg">${esc(msg)}</div>` : ''}
-      <div class="actions mt"><button class="btn" id="go">Open Admin Panel</button></div>
+      <div class="actions mt"><button class="btn" id="go">Open Designer</button></div>
     </div>`;
   const tryKey = async () => {
     adminKey = document.getElementById('keyIn').value.trim();
     if (!adminKey) return;
-    try { FW = await api('/api/admin/framework'); (document.getElementById('remember').checked ? localStorage : sessionStorage).setItem(KEY_STORE, adminKey); dirty = false; render(); }
+    try {
+      const who = await api('/api/hr/whoami');
+      ROLE = who.role;
+      FW = await api('/api/admin/framework');
+      (document.getElementById('remember').checked ? localStorage : sessionStorage).setItem(KEY_STORE, adminKey);
+      dirty = false; render();
+    }
     catch (e) { if (e.message !== 'forbidden') renderLogin(e.message); }
   };
   document.getElementById('go').onclick = tryKey;
@@ -51,7 +60,9 @@ function renderLogin(msg) {
 
 /* ===================== shell ===================== */
 function render() {
-  const tabs = [['skills', 'Categories & Skills'], ['scale', 'Proficiency scale'], ['bands', 'Bands'], ['fields', 'Profile fields'], ['meta', 'Titles'], ['keys', 'Access & security']];
+  const tabs = [['skills', 'Categories & Skills'], ['scale', 'Proficiency scale'], ['bands', 'Bands'], ['fields', 'Profile fields'], ['meta', 'Titles']];
+  if (ROLE === 'admin') tabs.push(['keys', 'Access & security']);
+  if (tab === 'keys' && ROLE !== 'admin') tab = 'skills';
   const totalSkills = FW.domains.reduce((s, d) => s + d.skills.length, 0);
   app.innerHTML = `
     <div class="list-head">
@@ -172,7 +183,7 @@ function renderKeys(body) {
       <div id="hrKeyResult"></div>
     </div>
     <div class="card">
-      <h2>Change your admin key</h2>
+      <h2>Change your Director key</h2>
       <p class="muted" style="margin-bottom:12px">Rotate your own key whenever you want. Your current session continues automatically with the new key. Overrides the <code>ADMIN_KEY</code> environment variable.</p>
       <div class="actions">
         <input type="text" id="adKeyIn" placeholder="New admin key (min 8 characters)" maxlength="64" style="max-width:300px" autocomplete="off">
@@ -186,7 +197,7 @@ function renderKeys(body) {
       <ul class="rules mt">
         <li>Keys are checked with constant-time comparison and a lockout after repeated failures.</li>
         <li>Every key change is recorded in the audit log (the key value itself is never stored in the log).</li>
-        <li>The admin key also opens the HR dashboard, so HR being locked out never blocks the company.</li>
+        <li>The Director key opens everything — designer, HR dashboard, analytics — so HR being locked out never blocks the company.</li>
       </ul>
     </div>`;
 
@@ -397,5 +408,8 @@ async function save() {
 
 window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
 
-if (adminKey) api('/api/admin/framework').then(fw => { FW = fw; render(); }).catch(e => { if (e.message !== 'forbidden') renderLogin(e.message); });
-else renderLogin();
+if (adminKey) {
+  Promise.all([api('/api/hr/whoami'), api('/api/admin/framework')])
+    .then(([who, fw]) => { ROLE = who.role; FW = fw; render(); })
+    .catch(e => { if (e.message !== 'forbidden') renderLogin(e.message); });
+} else renderLogin();
