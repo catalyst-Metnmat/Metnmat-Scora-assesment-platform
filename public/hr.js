@@ -327,6 +327,40 @@ async function renderDashboard() {
   const skillRows = list => list.map(g => `<tr><td>${g.sno}. ${esc(g.name)}</td><td><b>${g.domain}</b></td><td style="text-align:right">${fmtNum(g.avg)}</td></tr>`).join('')
     || '<tr><td colspan="3" class="empty">No data yet.</td></tr>';
 
+  /* proficiency matrix (employees × domains) */
+  const matrixPeople = dash.leaderboard.slice(0, 40);
+  const matrixHead = dash.domainBoards.map(b => `<th style="text-align:center;padding:8px 6px" title="${esc(b.name)}">${b.code}</th>`).join('');
+  const matrixRows = matrixPeople.map(p => `
+    <tr class="clickable" data-id="${p.id}">
+      <td style="white-space:nowrap"><b>${esc(p.name)}</b></td>
+      ${dash.domainBoards.map(b => { const v = p.domains[b.code]; return `<td style="text-align:center;padding:8px 6px;${heatCell(v)}">${v == null ? '—' : v.toFixed(1)}</td>`; }).join('')}
+    </tr>`).join('');
+  const matrixHtml = dash.leaderboard.length ? `
+    <div class="card">
+      <h2>Proficiency matrix</h2>
+      <p class="muted" style="margin-bottom:10px">Every employee × every domain (validated where available, else self). Darker = stronger. Click a row to open the submission.${dash.leaderboard.length > 40 ? ' Showing first 40 of ' + dash.leaderboard.length + '.' : ''}</p>
+      <div style="overflow-x:auto"><table class="list matrix"><thead><tr><th>Employee</th>${matrixHead}</tr></thead><tbody>${matrixRows}</tbody></table></div>
+    </div>` : '';
+
+  /* attention flags */
+  const now = Date.now();
+  const flags = [];
+  for (const p of dash.leaderboard) {
+    if (p.claimDelta != null && p.claimDelta >= 0.4) flags.push({ p, type: 'Over-claiming', cls: 'fail', note: `self-rated ${p.claimDelta.toFixed(2)} above validated` });
+    if (p.evidencePct != null && p.evidencePct < 15) flags.push({ p, type: 'Low evidence', cls: 'pending', note: `only ${p.evidencePct}% of skills have evidence` });
+    if (p.provisional && (now - new Date(p.submittedAt)) / 86400000 > 7) flags.push({ p, type: 'Validation overdue', cls: 'review', note: `pending for ${Math.floor((now - new Date(p.submittedAt)) / 86400000)} days` });
+  }
+  const flagsHtml = `
+    <div class="card">
+      <h2>Attention flags</h2>
+      <p class="muted" style="margin-bottom:10px">Items that may need HR follow-up.</p>
+      ${flags.length ? flags.map(f => `
+        <div class="podium-row clickable" data-id="${f.p.id}">
+          <span class="badge ${f.cls}">${f.type}</span>
+          <div><b>${esc(f.p.name)}</b><div class="muted">${esc(f.p.department)} · ${f.note}</div></div>
+        </div>`).join('') : '<div class="empty" style="padding:14px 0">No flags — everything looks healthy.</div>'}
+    </div>`;
+
   /* claim accuracy */
   const claimList = (list, cls) => list.map(p => `
     <div class="podium-row"><div><b>${esc(p.name)}</b><div class="muted">${esc(p.department)}</div></div>
@@ -370,6 +404,9 @@ async function renderDashboard() {
         <tbody>${leadRows}</tbody></table></div>
     </div>
 
+    ${matrixHtml}
+    ${flagsHtml}
+
     <div class="section-head"><div class="kicker">Domain rankings</div><h2>Toppers in every domain</h2></div>
     <div class="domain-rank-grid">${domainCards}</div>
 
@@ -397,7 +434,7 @@ async function renderDashboard() {
   document.getElementById('exportXlsxDash').onclick = () =>
     downloadCsv('/api/hr/export.xlsx' + (currentCycleFilter ? `?cycleId=${currentCycleFilter}` : ''), 'METNMAT_assessment_data.xlsx');
   app.querySelectorAll('.tab').forEach(b => b.onclick = () => { currentCycleFilter = b.dataset.cyc; renderDashboard(); });
-  app.querySelectorAll('tr.clickable').forEach(tr => tr.onclick = () => renderDetail(tr.dataset.id));
+  app.querySelectorAll('tr.clickable, .podium-row.clickable').forEach(el => el.onclick = () => renderDetail(el.dataset.id));
   window.scrollTo(0, 0);
 }
 
@@ -421,9 +458,43 @@ async function renderAuditPanel() {
 async function renderDetail(id) {
   let data;
   try { data = await api(`/api/hr/submissions/${id}`); await loadFramework(); } catch (e) { if (e.message !== 'forbidden') toast(e.message); return; }
-  const { submission: sub, cycleName, history } = data;
+  const { submission: sub, cycleName, history, analysis } = data;
   let scores = data.scores;
   const pending = {}; // unsaved edits
+
+  /* ---- performance analysis block ---- */
+  const maxBar = 5;
+  const cmpRows = scores.domains.map(d => {
+    const mine = d.validatedAvg != null ? d.validatedAvg : d.selfAvg;
+    const comp = analysis.companyDomainAvgs[d.code];
+    const dd = analysis.domainDeltas.find(x => x.code === d.code);
+    return `
+      <div class="cmp-row">
+        <span class="cmp-label"><b>${d.code}</b> ${esc(d.name)}</span>
+        <div class="cmp-bars">
+          <div class="cmp-track"><i class="cmp-me" style="width:${(mine / maxBar) * 100}%"></i></div>
+          <div class="cmp-track co"><i class="cmp-co" style="width:${((comp || 0) / maxBar) * 100}%"></i></div>
+        </div>
+        <span class="cmp-vals">${fmtNum(mine)} <span class="muted">vs ${fmtNum(comp)}</span></span>
+        <span>${dd && dd.delta != null ? deltaChip(dd.delta) : ''}</span>
+      </div>`;
+  }).join('');
+  const skillMini = list => list.map(s => `<tr><td>${s.sno}. ${esc(s.name)}</td><td><b>${s.domain}</b></td><td style="text-align:right"><b>${fmtNum(s.score)}</b></td></tr>`).join('');
+  const analysisHtml = `
+    <div class="card">
+      <h2>Performance analysis <span class="muted" style="font-weight:400;font-size:13px">· ${esc(cycleName)}</span></h2>
+      <div class="actions" style="margin:6px 0 14px">
+        <span class="badge band">Rank #${analysis.rank} of ${analysis.totalInCycle}</span>
+        ${analysis.totalInCycle > 1 ? `<span class="badge neutral">Top ${100 - analysis.percentile}%</span>` : ''}
+        ${analysis.nextBand ? `<span class="badge pending">Next band: ${esc(analysis.nextBand.name)} — needs +${analysis.nextBand.needed}</span>` : '<span class="badge validated">Highest band reached</span>'}
+      </div>
+      <h3 style="margin-bottom:8px">Domain proficiency vs company average <span class="muted" style="font-weight:400">(red = employee, grey = company · Δ = self minus validated)</span></h3>
+      ${cmpRows}
+      <div class="two-col mt">
+        <div><h3>Strongest skills</h3><table class="list mt"><tbody>${skillMini(analysis.topSkills)}</tbody></table></div>
+        <div><h3>Development areas</h3><table class="list mt"><tbody>${skillMini(analysis.weakSkills)}</tbody></table></div>
+      </div>
+    </div>`;
 
   const profileRows = SKILLS.profileFields.map(f =>
     `<tr><td style="color:var(--muted);width:240px">${esc(f.label)}</td><td><b>${esc(sub.profile[f.id] || '—')}</b></td></tr>`).join('');
@@ -492,10 +563,12 @@ async function renderDetail(id) {
       <button class="btn ghost small" id="backBtn">&larr; All submissions</button>
       <span class="badge neutral">${esc(cycleName)}</span>
       <span class="badge ${sub.status === 'validated' ? 'validated' : 'pending'}">${sub.status === 'validated' ? 'Validated ' + fmtDate(sub.validatedAt) : 'Pending validation'}</span>
+      <button class="btn ghost small" id="printBtn" style="margin-left:auto">Print report</button>
     </div>
     <h1>${esc(sub.profile.name)}</h1>
     <p class="sub">${esc(sub.profile.employeeId || '')} · ${esc(sub.profile.designation || '')} · ${esc(sub.profile.department || '')} · Submitted ${fmtDate(sub.submittedAt)}</p>
     <div id="scoreboard">${scoreboardHtml()}</div>
+    ${analysisHtml}
     <details class="domain-block"><summary>Employee profile</summary>
       <div class="inner"><table class="list"><tbody>${profileRows}</tbody></table></div>
     </details>
@@ -514,6 +587,7 @@ async function renderDetail(id) {
     </div>`;
 
   document.getElementById('backBtn').onclick = renderList;
+  document.getElementById('printBtn').onclick = () => window.print();
   document.getElementById('csvBtn').onclick = () =>
     downloadCsv(`/api/hr/submissions/${sub.id}/export.csv`, `METNMAT_assessment_${(sub.profile.name || 'employee').replace(/[^\w]+/g, '_')}.csv`);
 

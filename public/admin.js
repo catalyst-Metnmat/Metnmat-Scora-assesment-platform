@@ -51,7 +51,7 @@ function renderLogin(msg) {
 
 /* ===================== shell ===================== */
 function render() {
-  const tabs = [['skills', 'Categories & Skills'], ['scale', 'Proficiency scale'], ['bands', 'Bands'], ['fields', 'Profile fields'], ['meta', 'Titles']];
+  const tabs = [['skills', 'Categories & Skills'], ['scale', 'Proficiency scale'], ['bands', 'Bands'], ['fields', 'Profile fields'], ['meta', 'Titles'], ['keys', 'Access & security']];
   const totalSkills = FW.domains.reduce((s, d) => s + d.skills.length, 0);
   app.innerHTML = `
     <div class="list-head">
@@ -148,7 +148,81 @@ function renderTab() {
   else if (tab === 'scale') renderScale(body);
   else if (tab === 'bands') renderBands(body);
   else if (tab === 'fields') renderFields(body);
+  else if (tab === 'keys') renderKeys(body);
   else renderMeta(body);
+}
+
+/* ===================== access & security (key management) ===================== */
+function randomKey() {
+  const a = new Uint8Array(12);
+  crypto.getRandomValues(a);
+  return btoa(String.fromCharCode(...a)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function renderKeys(body) {
+  body.innerHTML = `
+    <div class="card">
+      <h2>Reset the HR access key</h2>
+      <p class="muted" style="margin-bottom:12px">Use this when HR forgets their key or it needs rotating. The new key takes effect immediately — share it with HR through a secure channel. Changes here override the <code>HR_KEY</code> environment variable on the server.</p>
+      <div class="actions">
+        <input type="text" id="hrKeyIn" placeholder="New HR key (min 8 characters)" maxlength="64" style="max-width:300px" autocomplete="off">
+        <button class="btn ghost small" id="hrGen">Generate strong key</button>
+        <button class="btn small" id="hrSet">Reset HR key</button>
+      </div>
+      <div id="hrKeyResult"></div>
+    </div>
+    <div class="card">
+      <h2>Change your admin key</h2>
+      <p class="muted" style="margin-bottom:12px">Rotate your own key whenever you want. Your current session continues automatically with the new key. Overrides the <code>ADMIN_KEY</code> environment variable.</p>
+      <div class="actions">
+        <input type="text" id="adKeyIn" placeholder="New admin key (min 8 characters)" maxlength="64" style="max-width:300px" autocomplete="off">
+        <button class="btn ghost small" id="adGen">Generate strong key</button>
+        <button class="btn small" id="adSet">Change admin key</button>
+      </div>
+      <div id="adKeyResult"></div>
+    </div>
+    <div class="card">
+      <h3>Security notes</h3>
+      <ul class="rules mt">
+        <li>Keys are checked with constant-time comparison and a lockout after repeated failures.</li>
+        <li>Every key change is recorded in the audit log (the key value itself is never stored in the log).</li>
+        <li>The admin key also opens the HR dashboard, so HR being locked out never blocks the company.</li>
+      </ul>
+    </div>`;
+
+  document.getElementById('hrGen').onclick = () => { document.getElementById('hrKeyIn').value = randomKey(); };
+  document.getElementById('adGen').onclick = () => { document.getElementById('adKeyIn').value = randomKey(); };
+
+  async function setKey(role, inputId, resultId) {
+    const key = document.getElementById(inputId).value.trim();
+    const result = document.getElementById(resultId);
+    result.innerHTML = '';
+    if (key.length < 8) { result.innerHTML = '<div class="error-msg">Key must be at least 8 characters.</div>'; return; }
+    if (!confirm(role === 'hr'
+      ? 'Reset the HR key now? The old HR key stops working immediately.'
+      : 'Change YOUR admin key now? Make sure you save the new key — without it you lose admin access.')) return;
+    try {
+      await api('/api/admin/keys', { method: 'PUT', body: JSON.stringify({ role, key }) });
+      if (role === 'admin') {
+        adminKey = key;
+        if (localStorage.getItem(KEY_STORE)) localStorage.setItem(KEY_STORE, key);
+        else sessionStorage.setItem(KEY_STORE, key);
+      }
+      result.innerHTML = `
+        <div class="mt" style="background:var(--copper-pale);border:1px dashed var(--copper);border-radius:10px;padding:12px 14px">
+          <b>${role === 'hr' ? 'New HR key' : 'New admin key'}:</b> <code id="newKeyVal" style="font-size:15px">${esc(key)}</code>
+          <button class="btn ghost small" id="copyKey" style="margin-left:10px">Copy</button>
+          <div class="muted" style="margin-top:6px">${role === 'hr' ? 'Share this with HR securely. The old key no longer works.' : 'Save this somewhere safe — your session has switched to it already.'}</div>
+        </div>`;
+      document.getElementById('copyKey').onclick = () => { navigator.clipboard.writeText(key); toast('Key copied to clipboard.'); };
+      document.getElementById(inputId).value = '';
+      toast(role === 'hr' ? 'HR key reset.' : 'Admin key changed.');
+    } catch (e) {
+      if (e.message !== 'forbidden') result.innerHTML = `<div class="error-msg">${esc(e.message)}</div>`;
+    }
+  }
+  document.getElementById('hrSet').onclick = () => setKey('hr', 'hrKeyIn', 'hrKeyResult');
+  document.getElementById('adSet').onclick = () => setKey('admin', 'adKeyIn', 'adKeyResult');
 }
 
 function move(arr, i, dir) { const j = i + dir; if (j < 0 || j >= arr.length) return; [arr[i], arr[j]] = [arr[j], arr[i]]; }

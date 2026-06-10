@@ -68,10 +68,16 @@ function fileDriver() {
       saveCfg();
     },
     async getSecrets() {
+      // runtime overrides (set from the Admin panel) win over env vars, which win over auto-generated
       return {
-        adminKey: process.env.ADMIN_KEY || config.adminKey,
-        hrKey: process.env.HR_KEY || config.hrKey
+        adminKey: config.adminKeyOverride || process.env.ADMIN_KEY || config.adminKey,
+        hrKey: config.hrKeyOverride || process.env.HR_KEY || config.hrKey
       };
+    },
+    async saveSecrets(overrides) {
+      if (overrides.adminKey !== undefined) config.adminKeyOverride = overrides.adminKey;
+      if (overrides.hrKey !== undefined) config.hrKeyOverride = overrides.hrKey;
+      saveCfg();
     },
     async getFramework() { return framework; },
     async saveFramework(fw) { framework = fw; saveFw(); },
@@ -131,7 +137,18 @@ function mongoDriver(uri) {
     async getSecrets() {
       const meta = await col('meta');
       const s = (await meta.findOne({ _id: 'secrets' }) || {}).value || {};
-      return { adminKey: process.env.ADMIN_KEY || s.adminKey, hrKey: process.env.HR_KEY || s.hrKey };
+      // runtime overrides (set from the Admin panel) win over env vars, which win over auto-generated
+      return {
+        adminKey: s.adminKeyOverride || process.env.ADMIN_KEY || s.adminKey,
+        hrKey: s.hrKeyOverride || process.env.HR_KEY || s.hrKey
+      };
+    },
+    async saveSecrets(overrides) {
+      const meta = await col('meta');
+      const s = (await meta.findOne({ _id: 'secrets' }) || {}).value || {};
+      if (overrides.adminKey !== undefined) s.adminKeyOverride = overrides.adminKey;
+      if (overrides.hrKey !== undefined) s.hrKeyOverride = overrides.hrKey;
+      await meta.updateOne({ _id: 'secrets' }, { $set: { value: s } }, { upsert: true });
     },
     async getFramework() { return ((await (await col('meta')).findOne({ _id: 'framework' })) || {}).value || null; },
     async saveFramework(fw) { await (await col('meta')).updateOne({ _id: 'framework' }, { $set: { value: fw } }, { upsert: true }); },

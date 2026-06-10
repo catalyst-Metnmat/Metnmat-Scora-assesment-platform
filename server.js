@@ -292,13 +292,45 @@ hr.get('/submissions/:id', wrap(async (req, res) => {
   const sub = await store.getSubmission(req.params.id);
   if (!sub) return res.status(404).json({ error: 'Submission not found' });
   const [fw, cfg, cycles] = await Promise.all([store.getFramework(), store.getConfig(), store.listCycles()]);
+  const sc = computeScores(sub, fw, cfg);
+
+  // ---- deep analysis: rank within cycle, domain comparison vs company, skill extremes, band gap ----
+  const cycleSubs = await store.listSubmissions(sub.cycleId);
+  const cycleScored = cycleSubs.map(s => ({ id: s.id, sc: computeScores(s, fw, cfg) }));
+  const rankOf = x => x.sc.weightedValidated != null ? x.sc.weightedValidated : x.sc.weightedSelf;
+  const ordered = [...cycleScored].sort((a, b) => rankOf(b) - rankOf(a));
+  const rank = ordered.findIndex(x => x.id === sub.id) + 1;
+  const avg = a => a.length ? +(a.reduce((s, v) => s + v, 0) / a.length).toFixed(2) : null;
+
+  const companyDomainAvgs = Object.fromEntries(fw.domains.map(d => [d.code,
+    avg(cycleScored.map(({ sc }) => { const dd = sc.domains.find(x => x.code === d.code); return dd.validatedAvg != null ? dd.validatedAvg : dd.selfAvg; }))]));
+
+  const skillScores = fw.domains.flatMap(d => d.skills.map(sk => {
+    const r = sub.ratings[sk.id] || {};
+    return { sno: sk.sno, name: sk.name, domain: d.code, score: r.hr != null && r.hr !== '' ? Number(r.hr) : Number(r.self) || 0 };
+  }));
+  const sortedSkills = [...skillScores].sort((a, b) => b.score - a.score || a.sno - b.sno);
+
+  const myScore = sc.weightedValidated != null ? sc.weightedValidated : sc.weightedSelf;
+  const sortedBands = [...(fw.bands || [])].sort((a, b) => a.min - b.min);
+  const nextBand = sortedBands.find(b => b.min > myScore) || null;
+
   res.json({
     submission: sub,
     cycleName: (cycles.find(c => c.id === sub.cycleId) || {}).name || '—',
-    scores: computeScores(sub, fw, cfg),
+    scores: sc,
     weights: activeWeights(fw, cfg),
     bands: fw.bands,
-    history: await employeeHistory(sub.profile.employeeId, sub.id, fw, cfg, cycles)
+    history: await employeeHistory(sub.profile.employeeId, sub.id, fw, cfg, cycles),
+    analysis: {
+      rank, totalInCycle: cycleScored.length,
+      percentile: cycleScored.length > 1 ? Math.round(((cycleScored.length - rank) / (cycleScored.length - 1)) * 100) : 100,
+      companyDomainAvgs,
+      topSkills: sortedSkills.slice(0, 5),
+      weakSkills: sortedSkills.slice(-5).reverse(),
+      domainDeltas: sc.domains.map(d => ({ code: d.code, delta: d.validatedAvg != null ? +(d.selfAvg - d.validatedAvg).toFixed(2) : null })),
+      nextBand: nextBand ? { name: nextBand.name, needed: +(nextBand.min - myScore).toFixed(2) } : null
+    }
   });
 }));
 
@@ -616,9 +648,20 @@ admin.put('/framework', wrap(async (req, res) => {
   res.json({ ok: true, framework: fw });
 }));
 
-// rotate keys (admin can change both keys)
+// key management — admin can rotate their own key and reset HR's key any time.
+// Runtime keys override the ADMIN_KEY / HR_KEY environment variables.
 admin.put('/keys', wrap(async (req, res) => {
-  res.status(501).json({ error: 'Keys are set via ADMIN_KEY / HR_KEY environment variables in production. Update them on your host and restart.' });
+  const { role, key } = req.body || {};
+  if (!['admin', 'hr'].includes(role)) return res.status(400).json({ error: 'role must be "admin" or "hr"' });
+  const k = String(key || '').trim();
+  if (k.length < 8 || k.length > 64) return res.status(400).json({ error: 'Key must be 8–64 characters.' });
+  if (/\s/.test(k)) return res.status(400).json({ error: 'Key cannot contain spaces.' });
+  const current = await store.getSecrets();
+  const other = role === 'admin' ? current.hrKey : current.adminKey;
+  if (k === other) return res.status(400).json({ error: 'Admin and HR keys must be different.' });
+  await store.saveSecrets({ [role === 'admin' ? 'adminKey' : 'hrKey']: k });
+  audit('keys.changed', req, { role }); // the key itself is never logged
+  res.json({ ok: true, role });
 }));
 
 // ---- import an Excel/CSV/PDF file and extract categories + skills into a DRAFT (not saved) ----

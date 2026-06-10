@@ -618,6 +618,28 @@ details.domain-block .inner { padding: 4px 20px 18px; }
 .drc-more table { font-size: 13px; }
 .drc-more td { padding: 7px 8px; }
 
+/* employee vs company comparison bars */
+.cmp-row {
+  display: grid; grid-template-columns: minmax(150px, 250px) 1fr 92px 70px;
+  gap: 12px; align-items: center;
+  padding: 7px 0; border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.cmp-row:last-of-type { border-bottom: none; }
+.cmp-label { color: var(--navy-800); }
+.cmp-bars { display: flex; flex-direction: column; gap: 3px; }
+.cmp-track { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; }
+.cmp-track i { display: block; height: 100%; border-radius: 99px; background: var(--copper-grad); transform-origin: left; animation: grow .7s var(--ease) both; }
+.cmp-track.co i { background: #9aa8b5; }
+.cmp-vals { font-weight: 700; color: var(--navy-900); white-space: nowrap; font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) {
+  .cmp-row { grid-template-columns: 1fr 80px; }
+  .cmp-bars { grid-column: 1 / -1; }
+}
+
+table.matrix th, table.matrix td { font-size: 12.5px; }
+table.matrix td:first-child { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+
 /* ---------------- misc ---------------- */
 .toast {
   position: fixed; bottom: 26px; left: 50%;
