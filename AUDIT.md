@@ -149,7 +149,7 @@
 ### Blocking items before go-live (must do)
 1. **Rotate** `MONGODB_URI` password, `ADMIN_KEY`, `HR_KEY`; set them only in Render env vars.
 2. ~~Verify `metnmat.com` in Resend~~ ✔ done — working key in local `.env`; **copy `RESEND_API_KEY` into Render env vars**.
-3. **Delete the DEMO submissions** (Asha/Bikram) from Atlas.
+3. ~~Delete the DEMO submissions~~ ✔ done — all dummy data (submissions, drafts, test accounts, attachments) cleared 10 Jun 2026; DB is at a clean first-run state.
 4. **Set `PUBLIC_URL`** in Render so email links point to the live site; add **`JWT_SECRET`** so named-user sessions survive redeploys.
 5. Establish a **weekly Atlas export/backup** habit (M0 has no auto-backup).
 

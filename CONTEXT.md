@@ -13,7 +13,7 @@ _Last updated: 10 Jun 2026. Read this first when resuming work._
 ## 2. Status
 - **~16 build passes done.** Git: ~16 commits on `master`. **NOT yet pushed to GitHub and NOT yet deployed.**
 - **Live backend:** MongoDB Atlas is connected and working (`assessment_admin@cluster0.xf0g4j5`). The full `.env` (gitignored) has the real `MONGODB_URI`, `ADMIN_KEY`, `HR_KEY`. **Keys are also stored in auto-memory.**
-- **Demo data in Atlas:** two submissions in cycle **"FY 2026-27"** (open): *DEMO — Asha Verma* (validated, Band 3) and *DEMO — Bikram Das* (pending). Delete these before real rollout.
+- **Demo data: CLEARED (10 Jun 2026, pre-handover).** All test submissions, drafts, SCORA accounts and attachments were deleted; the DB holds only the framework (16 domains / 227 skills), the open cycle "FY 2026-27" + its snapshot, and the audit trail. The platform is at a clean first-run state for the company.
 - **Audit/readiness:** see `AUDIT.md` — ~94/100 for deployed purpose, ~90/100 vs the full enterprise spec.
 
 ## 3. Roles & authentication
