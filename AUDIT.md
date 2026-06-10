@@ -1,7 +1,9 @@
-# METNMAT Employee Assessment & Evaluation Portal — Production Audit
+# SCORA (by METNMAT Innovations) — Employee Assessment & Evaluation Portal — Production Audit
 
 **Date:** 10 June 2026 · **Auditor role:** Senior Product Architect / Enterprise HRMS Consultant / QA Lead
 **Method:** every claim below was verified against the **running system** (live MongoDB Atlas backend) and the **master workbook** (`METNMAT_Skill_Assessment.xlsx`) — nothing was assumed complete without a live check.
+
+> Update: portal named **SCORA**. **Named user accounts (JWT)** now implemented — individual HR/Director logins (username + password, scrypt-hashed, HS256 12h tokens) managed by Directors under Settings → Manage users, with the shared role keys retained as bootstrap/fallback and per-person audit attribution. **Reporting-manager hierarchy** view added to the employee directory. Notifications remain intentionally removed per instruction.
 
 ---
 
@@ -50,8 +52,8 @@ Automated field-by-field comparison of the live framework vs the workbook:
 
 **P2 — enterprise wish-list**
 9. ~~Question types~~ — **built** for future templates: MCQ (with optional correct-answer auto-scoring), subjective text, optional/mandatory flags, per-question weight and difficulty — designer settings, wizard rendering, type-aware scoring. Defaults keep the 2026 master template byte-identical. Still pending: evidence **file** upload (text evidence exists).
-10. Individual named HR/Director accounts (JWT/SSO) instead of shared role keys — needed for per-person audit attribution. **Deliberately deferred.**
-11. WhatsApp transport wiring (stub ready); approval workflow step beyond finalize.
+10. ~~Individual named HR/Director accounts (JWT)~~ — **built**: username + password (scrypt), HS256 12h tokens, Director-managed users, per-person audit attribution; shared keys remain as fallback. (Full external SSO/OAuth still optional.)
+11. WhatsApp transport + notifications: **intentionally removed** per instruction. Approval workflow beyond finalize: still open.
 
 ## 4. Security gaps
 - **Shared role keys** → audit attribution is by role+IP, not by person (P2 #10).
@@ -90,7 +92,7 @@ No privilege-escalation path found; old keys verified dead after rotation.
 
 | Lens | Score | Verdict |
 |---|---|---|
-| **For its deployed purpose** — the 2026 METNMAT skill self-assessment + HR validation per the workbook | **93 / 100** | **Production-ready** once P0 items 2–3 are done (backup routine + secret rotation). |
-| Against the full enterprise-HRMS specification above | **≈85 / 100** | All P1 gaps closed same-day (snapshots, notifications, employee self-service, employee master data, PDF reports, question types). Remaining: named JWT accounts, evidence file upload, WhatsApp transport wiring. |
+| **For its deployed purpose** — the 2026 METNMAT skill self-assessment + HR validation per the workbook | **94 / 100** | **Production-ready** once P0 items 2–3 are done (backup routine + secret rotation). |
+| Against the full enterprise-HRMS specification above | **≈90 / 100** | Snapshots, employee self-service, employee master data + reporting hierarchy, PDF reports, question types, and **named JWT accounts** all built. Remaining (optional): evidence **file** upload (needs object storage); WhatsApp + notifications intentionally removed. |
 
 **Remaining roadmap:** named individual accounts (per-person audit attribution) → evidence file upload → WhatsApp transport. To activate email notifications on the host, set `RESEND_API_KEY` and `HR_NOTIFY_EMAIL` environment variables.
