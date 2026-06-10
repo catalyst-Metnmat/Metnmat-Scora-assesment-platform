@@ -1,0 +1,1373 @@
+{
+  "company": "METNMAT Innovations Pvt. Ltd.",
+  "title": "Employee Skill & Competency Assessment",
+  "tagline": "Proficiency-based compensation and promotion framework",
+  "scale": [
+    {
+      "level": 0,
+      "label": "No exposure",
+      "definition": "No working knowledge; have not performed this task."
+    },
+    {
+      "level": 1,
+      "label": "Awareness",
+      "definition": "Understand the concept; cannot perform without guidance."
+    },
+    {
+      "level": 2,
+      "label": "Basic (assisted)",
+      "definition": "Can perform routine parts of the task under supervision."
+    },
+    {
+      "level": 3,
+      "label": "Proficient (independent)",
+      "definition": "Perform reliably and independently in normal situations."
+    },
+    {
+      "level": 4,
+      "label": "Advanced",
+      "definition": "Handle complex or non-standard situations; improve methods and tools."
+    },
+    {
+      "level": 5,
+      "label": "Expert (mentor)",
+      "definition": "Recognized authority; set standards, solve the hardest cases, and train others."
+    }
+  ],
+  "bands": [
+    {
+      "min": 0,
+      "max": 1.49,
+      "name": "Band 1 - Trainee / Entry"
+    },
+    {
+      "min": 1.5,
+      "max": 2.49,
+      "name": "Band 2 - Associate / Junior"
+    },
+    {
+      "min": 2.5,
+      "max": 3.49,
+      "name": "Band 3 - Executive / Engineer"
+    },
+    {
+      "min": 3.5,
+      "max": 4.24,
+      "name": "Band 4 - Senior / Specialist"
+    },
+    {
+      "min": 4.25,
+      "max": 5,
+      "name": "Band 5 - Lead / Principal"
+    }
+  ],
+  "profileFields": [
+    {
+      "id": "name",
+      "label": "Full name",
+      "required": true
+    },
+    {
+      "id": "employeeId",
+      "label": "Employee ID",
+      "required": true
+    },
+    {
+      "id": "department",
+      "label": "Department / function",
+      "required": true
+    },
+    {
+      "id": "designation",
+      "label": "Current designation",
+      "required": true
+    },
+    {
+      "id": "location",
+      "label": "Location",
+      "required": true,
+      "options": [
+        "Howrah",
+        "Sambalpur",
+        "Mumbai",
+        "Other"
+      ]
+    },
+    {
+      "id": "manager",
+      "label": "Reporting manager",
+      "required": true
+    },
+    {
+      "id": "doj",
+      "label": "Date of joining",
+      "required": true,
+      "type": "date"
+    },
+    {
+      "id": "experience",
+      "label": "Total years of experience",
+      "required": true
+    },
+    {
+      "id": "qualification",
+      "label": "Highest qualification",
+      "required": true
+    },
+    {
+      "id": "responsibilities",
+      "label": "Key responsibilities (brief)",
+      "required": false,
+      "type": "textarea"
+    }
+  ],
+  "domains": [
+    {
+      "code": "A",
+      "name": "Marketing, Branding & Demand Generation",
+      "weight": 6,
+      "skills": [
+        {
+          "id": "s1",
+          "sno": 1,
+          "name": "B2B digital marketing strategy"
+        },
+        {
+          "id": "s2",
+          "sno": 2,
+          "name": "Search engine optimization (SEO)"
+        },
+        {
+          "id": "s3",
+          "sno": 3,
+          "name": "Social media management (LinkedIn, YouTube, Instagram)"
+        },
+        {
+          "id": "s4",
+          "sno": 4,
+          "name": "Content marketing and blogging"
+        },
+        {
+          "id": "s5",
+          "sno": 5,
+          "name": "Technical content writing (application notes, white papers)"
+        },
+        {
+          "id": "s6",
+          "sno": 6,
+          "name": "Scientific copywriting for a researcher audience"
+        },
+        {
+          "id": "s7",
+          "sno": 7,
+          "name": "Product brochure and datasheet creation"
+        },
+        {
+          "id": "s8",
+          "sno": 8,
+          "name": "Email marketing and newsletter campaigns"
+        },
+        {
+          "id": "s9",
+          "sno": 9,
+          "name": "Inbound lead generation"
+        },
+        {
+          "id": "s10",
+          "sno": 10,
+          "name": "Outbound lead generation and cold outreach"
+        },
+        {
+          "id": "s11",
+          "sno": 11,
+          "name": "IndiaMART and B2B marketplace management"
+        },
+        {
+          "id": "s12",
+          "sno": 12,
+          "name": "Marketplace listing optimization"
+        },
+        {
+          "id": "s13",
+          "sno": 13,
+          "name": "Trade fair and exhibition planning and representation"
+        },
+        {
+          "id": "s14",
+          "sno": 14,
+          "name": "Webinar and technical seminar hosting"
+        },
+        {
+          "id": "s15",
+          "sno": 15,
+          "name": "Market research and market sizing"
+        },
+        {
+          "id": "s16",
+          "sno": 16,
+          "name": "Competitor analysis and benchmarking"
+        },
+        {
+          "id": "s17",
+          "sno": 17,
+          "name": "Brand positioning and messaging"
+        },
+        {
+          "id": "s18",
+          "sno": 18,
+          "name": "Graphic design (Canva or Adobe tools)"
+        },
+        {
+          "id": "s19",
+          "sno": 19,
+          "name": "Product demo video creation and editing"
+        },
+        {
+          "id": "s20",
+          "sno": 20,
+          "name": "Marketing analytics and campaign reporting"
+        }
+      ]
+    },
+    {
+      "code": "B",
+      "name": "Sales & Business Development",
+      "weight": 8,
+      "skills": [
+        {
+          "id": "s21",
+          "sno": 21,
+          "name": "Inbound inquiry handling"
+        },
+        {
+          "id": "s22",
+          "sno": 22,
+          "name": "Lead qualification"
+        },
+        {
+          "id": "s23",
+          "sno": 23,
+          "name": "Consultative technical selling"
+        },
+        {
+          "id": "s24",
+          "sno": 24,
+          "name": "Solution selling for custom-built systems"
+        },
+        {
+          "id": "s25",
+          "sno": 25,
+          "name": "Account management and retention"
+        },
+        {
+          "id": "s26",
+          "sno": 26,
+          "name": "New customer acquisition"
+        },
+        {
+          "id": "s27",
+          "sno": 27,
+          "name": "Export and international sales"
+        },
+        {
+          "id": "s28",
+          "sno": 28,
+          "name": "Selling to universities and research institutes"
+        },
+        {
+          "id": "s29",
+          "sno": 29,
+          "name": "Selling to government labs and PSUs"
+        },
+        {
+          "id": "s30",
+          "sno": 30,
+          "name": "Tender and RFP response preparation"
+        },
+        {
+          "id": "s31",
+          "sno": 31,
+          "name": "GeM portal (Government e-Marketplace) operations"
+        },
+        {
+          "id": "s32",
+          "sno": 32,
+          "name": "e-Procurement and CPPP portal navigation"
+        },
+        {
+          "id": "s33",
+          "sno": 33,
+          "name": "Distributor and channel development"
+        },
+        {
+          "id": "s34",
+          "sno": 34,
+          "name": "Sales pipeline management and forecasting"
+        },
+        {
+          "id": "s35",
+          "sno": 35,
+          "name": "CRM operation and data hygiene"
+        },
+        {
+          "id": "s36",
+          "sno": 36,
+          "name": "Negotiation and deal closing"
+        },
+        {
+          "id": "s37",
+          "sno": 37,
+          "name": "Cross-selling and upselling of consumables"
+        },
+        {
+          "id": "s38",
+          "sno": 38,
+          "name": "Customer needs assessment"
+        },
+        {
+          "id": "s39",
+          "sno": 39,
+          "name": "Sales presentation and product demonstration"
+        },
+        {
+          "id": "s40",
+          "sno": 40,
+          "name": "Follow-up discipline and lead conversion"
+        }
+      ]
+    },
+    {
+      "code": "C",
+      "name": "Quotation, Costing & Commercials",
+      "weight": 7,
+      "skills": [
+        {
+          "id": "s41",
+          "sno": 41,
+          "name": "Quotation and proforma invoice preparation"
+        },
+        {
+          "id": "s42",
+          "sno": 42,
+          "name": "BOM-based product costing"
+        },
+        {
+          "id": "s43",
+          "sno": 43,
+          "name": "Margin and markup calculation"
+        },
+        {
+          "id": "s44",
+          "sno": 44,
+          "name": "Make-versus-trade pricing decisions"
+        },
+        {
+          "id": "s45",
+          "sno": 45,
+          "name": "Discount structuring and approval logic"
+        },
+        {
+          "id": "s46",
+          "sno": 46,
+          "name": "Incoterms application (EXW, FOB, CIF, DDP)"
+        },
+        {
+          "id": "s47",
+          "sno": 47,
+          "name": "Export pricing and currency handling"
+        },
+        {
+          "id": "s48",
+          "sno": 48,
+          "name": "Letter of Credit and payment-term structuring"
+        },
+        {
+          "id": "s49",
+          "sno": 49,
+          "name": "GST classification and HSN coding"
+        },
+        {
+          "id": "s50",
+          "sno": 50,
+          "name": "Customs duty and import cost estimation"
+        },
+        {
+          "id": "s51",
+          "sno": 51,
+          "name": "Freight and logistics cost estimation"
+        },
+        {
+          "id": "s52",
+          "sno": 52,
+          "name": "Rate contract and price-list management"
+        },
+        {
+          "id": "s53",
+          "sno": 53,
+          "name": "Commercial terms negotiation"
+        },
+        {
+          "id": "s54",
+          "sno": 54,
+          "name": "Purchase order scrutiny and order acknowledgment"
+        }
+      ]
+    },
+    {
+      "code": "D",
+      "name": "Customer Relationship & After-Sales Service",
+      "weight": 7,
+      "skills": [
+        {
+          "id": "s55",
+          "sno": 55,
+          "name": "Professional spoken customer communication"
+        },
+        {
+          "id": "s56",
+          "sno": 56,
+          "name": "Professional written and email communication"
+        },
+        {
+          "id": "s57",
+          "sno": 57,
+          "name": "Pre-sales technical query resolution"
+        },
+        {
+          "id": "s58",
+          "sno": 58,
+          "name": "Complaint and escalation handling"
+        },
+        {
+          "id": "s59",
+          "sno": 59,
+          "name": "Order status and delivery communication"
+        },
+        {
+          "id": "s60",
+          "sno": 60,
+          "name": "Installation and commissioning support"
+        },
+        {
+          "id": "s61",
+          "sno": 61,
+          "name": "On-site and remote customer training"
+        },
+        {
+          "id": "s62",
+          "sno": 62,
+          "name": "Equipment demonstration to customers"
+        },
+        {
+          "id": "s63",
+          "sno": 63,
+          "name": "Warranty and service management"
+        },
+        {
+          "id": "s64",
+          "sno": 64,
+          "name": "Spare parts and consumable support"
+        },
+        {
+          "id": "s65",
+          "sno": 65,
+          "name": "Customer feedback and satisfaction tracking"
+        },
+        {
+          "id": "s66",
+          "sno": 66,
+          "name": "Long-term relationship management"
+        },
+        {
+          "id": "s67",
+          "sno": 67,
+          "name": "Technical documentation handover"
+        }
+      ]
+    },
+    {
+      "code": "E",
+      "name": "Electrochemistry - Domain Knowledge",
+      "weight": 10,
+      "skills": [
+        {
+          "id": "s68",
+          "sno": 68,
+          "name": "Electrochemistry fundamentals (thermodynamics and kinetics)"
+        },
+        {
+          "id": "s69",
+          "sno": 69,
+          "name": "Two- and three-electrode cell configuration"
+        },
+        {
+          "id": "s70",
+          "sno": 70,
+          "name": "Reference electrodes (Ag/AgCl, SCE, Hg/HgO, RHE)"
+        },
+        {
+          "id": "s71",
+          "sno": 71,
+          "name": "Alkaline water electrolysis"
+        },
+        {
+          "id": "s72",
+          "sno": 72,
+          "name": "PEM water electrolysis"
+        },
+        {
+          "id": "s73",
+          "sno": 73,
+          "name": "Anion exchange membrane water electrolysis (AEMWE)"
+        },
+        {
+          "id": "s74",
+          "sno": 74,
+          "name": "CO2 reduction electrochemistry"
+        },
+        {
+          "id": "s75",
+          "sno": 75,
+          "name": "Fuel cell fundamentals"
+        },
+        {
+          "id": "s76",
+          "sno": 76,
+          "name": "Flow cell and flow reactor principles"
+        },
+        {
+          "id": "s77",
+          "sno": 77,
+          "name": "Gas diffusion electrode (GDE) concepts"
+        },
+        {
+          "id": "s78",
+          "sno": 78,
+          "name": "Membrane electrode assembly (MEA) concepts"
+        },
+        {
+          "id": "s79",
+          "sno": 79,
+          "name": "Catalyst selection and loading"
+        },
+        {
+          "id": "s80",
+          "sno": 80,
+          "name": "Electrocatalysis (OER, HER, ORR, CO2RR)"
+        },
+        {
+          "id": "s81",
+          "sno": 81,
+          "name": "Faradaic efficiency and product selectivity"
+        },
+        {
+          "id": "s82",
+          "sno": 82,
+          "name": "Cyclic voltammetry (CV)"
+        },
+        {
+          "id": "s83",
+          "sno": 83,
+          "name": "Linear sweep voltammetry (LSV)"
+        },
+        {
+          "id": "s84",
+          "sno": 84,
+          "name": "Electrochemical impedance spectroscopy (EIS)"
+        },
+        {
+          "id": "s85",
+          "sno": 85,
+          "name": "Chronoamperometry and chronopotentiometry"
+        },
+        {
+          "id": "s86",
+          "sno": 86,
+          "name": "Potentiostat and galvanostat operation"
+        },
+        {
+          "id": "s87",
+          "sno": 87,
+          "name": "Tafel analysis"
+        },
+        {
+          "id": "s88",
+          "sno": 88,
+          "name": "Electrolyte preparation and handling"
+        },
+        {
+          "id": "s89",
+          "sno": 89,
+          "name": "Membrane conditioning (Nafion, AEM)"
+        },
+        {
+          "id": "s90",
+          "sno": 90,
+          "name": "Product gas analysis (GC and mass spectrometry basics)"
+        }
+      ]
+    },
+    {
+      "code": "F",
+      "name": "Materials & Metallurgy",
+      "weight": 7,
+      "skills": [
+        {
+          "id": "s91",
+          "sno": 91,
+          "name": "Material selection for corrosive and electrochemical media"
+        },
+        {
+          "id": "s92",
+          "sno": 92,
+          "name": "Corrosion mechanisms and prevention"
+        },
+        {
+          "id": "s93",
+          "sno": 93,
+          "name": "Metals and alloys for cells (Ti, SS316L, Ni, graphite, Cu-ETP)"
+        },
+        {
+          "id": "s94",
+          "sno": 94,
+          "name": "Surface coatings and electrodeposition (Pt, Ir, Ru, DSA electrodes)"
+        },
+        {
+          "id": "s95",
+          "sno": 95,
+          "name": "Polymers and elastomers for sealing (PTFE, PEEK, EPDM, Viton)"
+        },
+        {
+          "id": "s96",
+          "sno": 96,
+          "name": "Material characterization awareness (SEM, EDS, XRD)"
+        },
+        {
+          "id": "s97",
+          "sno": 97,
+          "name": "Metallography and microstructure basics"
+        },
+        {
+          "id": "s98",
+          "sno": 98,
+          "name": "Heat treatment fundamentals"
+        },
+        {
+          "id": "s99",
+          "sno": 99,
+          "name": "Failure analysis basics"
+        },
+        {
+          "id": "s100",
+          "sno": 100,
+          "name": "Material test certificate interpretation"
+        }
+      ]
+    },
+    {
+      "code": "G",
+      "name": "Mechanical Design & Engineering",
+      "weight": 9,
+      "skills": [
+        {
+          "id": "s101",
+          "sno": 101,
+          "name": "CAD modelling (SolidWorks)"
+        },
+        {
+          "id": "s102",
+          "sno": 102,
+          "name": "CAD modelling (Fusion 360 / Inventor)"
+        },
+        {
+          "id": "s103",
+          "sno": 103,
+          "name": "2D drafting (AutoCAD)"
+        },
+        {
+          "id": "s104",
+          "sno": 104,
+          "name": "Engineering drawing and GD&T"
+        },
+        {
+          "id": "s105",
+          "sno": 105,
+          "name": "Serpentine flow-field design"
+        },
+        {
+          "id": "s106",
+          "sno": 106,
+          "name": "Interdigitated and parallel channel design"
+        },
+        {
+          "id": "s107",
+          "sno": 107,
+          "name": "Bipolar plate design"
+        },
+        {
+          "id": "s108",
+          "sno": 108,
+          "name": "Cell stack and assembly design"
+        },
+        {
+          "id": "s109",
+          "sno": 109,
+          "name": "Sealing, gasket and O-ring design"
+        },
+        {
+          "id": "s110",
+          "sno": 110,
+          "name": "Pressure-bearing component design"
+        },
+        {
+          "id": "s111",
+          "sno": 111,
+          "name": "Material selection for mechanical design"
+        },
+        {
+          "id": "s112",
+          "sno": 112,
+          "name": "Thermal management and heat-exchanger design"
+        },
+        {
+          "id": "s113",
+          "sno": 113,
+          "name": "Tolerance stack-up analysis"
+        },
+        {
+          "id": "s114",
+          "sno": 114,
+          "name": "Design for manufacturing (DFM)"
+        },
+        {
+          "id": "s115",
+          "sno": 115,
+          "name": "Design for assembly (DFA)"
+        },
+        {
+          "id": "s116",
+          "sno": 116,
+          "name": "Rapid prototyping and 3D printing"
+        },
+        {
+          "id": "s117",
+          "sno": 117,
+          "name": "Reverse engineering"
+        },
+        {
+          "id": "s118",
+          "sno": 118,
+          "name": "P&ID and process flow diagram development"
+        }
+      ]
+    },
+    {
+      "code": "H",
+      "name": "Manufacturing, Fabrication & Production",
+      "weight": 8,
+      "skills": [
+        {
+          "id": "s119",
+          "sno": 119,
+          "name": "CNC/VMC machining knowledge"
+        },
+        {
+          "id": "s120",
+          "sno": 120,
+          "name": "Manual machining (milling, turning)"
+        },
+        {
+          "id": "s121",
+          "sno": 121,
+          "name": "Sheet metal fabrication"
+        },
+        {
+          "id": "s122",
+          "sno": 122,
+          "name": "Welding and brazing knowledge"
+        },
+        {
+          "id": "s123",
+          "sno": 123,
+          "name": "Component and sub-assembly assembly"
+        },
+        {
+          "id": "s124",
+          "sno": 124,
+          "name": "Production planning and scheduling"
+        },
+        {
+          "id": "s125",
+          "sno": 125,
+          "name": "BOM creation and control"
+        },
+        {
+          "id": "s126",
+          "sno": 126,
+          "name": "Work instruction and routing preparation"
+        },
+        {
+          "id": "s127",
+          "sno": 127,
+          "name": "Jig and fixture concepts"
+        },
+        {
+          "id": "s128",
+          "sno": 128,
+          "name": "Leak testing and pressure testing"
+        },
+        {
+          "id": "s129",
+          "sno": 129,
+          "name": "Surface treatment, coating and plating coordination"
+        },
+        {
+          "id": "s130",
+          "sno": 130,
+          "name": "Cleanliness and contamination control"
+        },
+        {
+          "id": "s131",
+          "sno": 131,
+          "name": "Job-work and fabrication vendor coordination"
+        },
+        {
+          "id": "s132",
+          "sno": 132,
+          "name": "Material handling and storage"
+        },
+        {
+          "id": "s133",
+          "sno": 133,
+          "name": "Assembly-line quality checks"
+        }
+      ]
+    },
+    {
+      "code": "I",
+      "name": "Instrumentation, Electrical & Control Systems",
+      "weight": 7,
+      "skills": [
+        {
+          "id": "s134",
+          "sno": 134,
+          "name": "Electrical wiring and panel building"
+        },
+        {
+          "id": "s135",
+          "sno": 135,
+          "name": "PLC programming (Siemens S7-1200 or equivalent)"
+        },
+        {
+          "id": "s136",
+          "sno": 136,
+          "name": "HMI configuration (TP700 or equivalent)"
+        },
+        {
+          "id": "s137",
+          "sno": 137,
+          "name": "SCADA basics"
+        },
+        {
+          "id": "s138",
+          "sno": 138,
+          "name": "Temperature sensor selection and integration"
+        },
+        {
+          "id": "s139",
+          "sno": 139,
+          "name": "Flow sensor selection and integration"
+        },
+        {
+          "id": "s140",
+          "sno": 140,
+          "name": "Pressure and level sensor selection and integration"
+        },
+        {
+          "id": "s141",
+          "sno": 141,
+          "name": "PID and temperature controller setup"
+        },
+        {
+          "id": "s142",
+          "sno": 142,
+          "name": "Mass flow controller (MFC) integration"
+        },
+        {
+          "id": "s143",
+          "sno": 143,
+          "name": "DC power supply and rectifier knowledge"
+        },
+        {
+          "id": "s144",
+          "sno": 144,
+          "name": "SCR phase-controlled rectifier concepts"
+        },
+        {
+          "id": "s145",
+          "sno": 145,
+          "name": "Control loop tuning"
+        },
+        {
+          "id": "s146",
+          "sno": 146,
+          "name": "Electrical safety and earthing standards"
+        },
+        {
+          "id": "s147",
+          "sno": 147,
+          "name": "Instrumentation calibration"
+        },
+        {
+          "id": "s148",
+          "sno": 148,
+          "name": "Wiring diagram and schematic reading"
+        }
+      ]
+    },
+    {
+      "code": "J",
+      "name": "Procurement, Supply Chain & Logistics",
+      "weight": 5,
+      "skills": [
+        {
+          "id": "s149",
+          "sno": 149,
+          "name": "Vendor identification and development"
+        },
+        {
+          "id": "s150",
+          "sno": 150,
+          "name": "Purchase order processing"
+        },
+        {
+          "id": "s151",
+          "sno": 151,
+          "name": "Vendor negotiation"
+        },
+        {
+          "id": "s152",
+          "sno": 152,
+          "name": "Material and component specification"
+        },
+        {
+          "id": "s153",
+          "sno": 153,
+          "name": "Inventory and stock management"
+        },
+        {
+          "id": "s154",
+          "sno": 154,
+          "name": "Import procedure and customs clearance"
+        },
+        {
+          "id": "s155",
+          "sno": 155,
+          "name": "DGFT, IEC and export documentation"
+        },
+        {
+          "id": "s156",
+          "sno": 156,
+          "name": "Domestic logistics coordination"
+        },
+        {
+          "id": "s157",
+          "sno": 157,
+          "name": "Export logistics and freight forwarding"
+        },
+        {
+          "id": "s158",
+          "sno": 158,
+          "name": "Incoming material inspection coordination"
+        },
+        {
+          "id": "s159",
+          "sno": 159,
+          "name": "Supplier quality management"
+        }
+      ]
+    },
+    {
+      "code": "K",
+      "name": "Quality, Compliance & Documentation",
+      "weight": 5,
+      "skills": [
+        {
+          "id": "s160",
+          "sno": 160,
+          "name": "Quality control and inspection"
+        },
+        {
+          "id": "s161",
+          "sno": 161,
+          "name": "Metrology and measurement (caliper, micrometer, CMM)"
+        },
+        {
+          "id": "s162",
+          "sno": 162,
+          "name": "ISO 9001 / QMS awareness"
+        },
+        {
+          "id": "s163",
+          "sno": 163,
+          "name": "Calibration management"
+        },
+        {
+          "id": "s164",
+          "sno": 164,
+          "name": "CE marking and export product compliance"
+        },
+        {
+          "id": "s165",
+          "sno": 165,
+          "name": "Test report and certificate preparation"
+        },
+        {
+          "id": "s166",
+          "sno": 166,
+          "name": "SOP and work instruction writing"
+        },
+        {
+          "id": "s167",
+          "sno": 167,
+          "name": "Technical manual and user guide writing"
+        },
+        {
+          "id": "s168",
+          "sno": 168,
+          "name": "Non-conformance and CAPA handling"
+        },
+        {
+          "id": "s169",
+          "sno": 169,
+          "name": "Chemical handling, MSDS and safety compliance"
+        },
+        {
+          "id": "s170",
+          "sno": 170,
+          "name": "Document control and version management"
+        }
+      ]
+    },
+    {
+      "code": "L",
+      "name": "Software, Data, AI & Computational Tools",
+      "weight": 5,
+      "skills": [
+        {
+          "id": "s171",
+          "sno": 171,
+          "name": "MS Excel (advanced: formulas, pivot tables)"
+        },
+        {
+          "id": "s172",
+          "sno": 172,
+          "name": "MS Word and PowerPoint (professional documents)"
+        },
+        {
+          "id": "s173",
+          "sno": 173,
+          "name": "Data analysis and visualization"
+        },
+        {
+          "id": "s174",
+          "sno": 174,
+          "name": "Python (scripting and analysis)"
+        },
+        {
+          "id": "s175",
+          "sno": 175,
+          "name": "Simulation (COMSOL Multiphysics)"
+        },
+        {
+          "id": "s176",
+          "sno": 176,
+          "name": "Simulation (ANSYS CFD / FEA)"
+        },
+        {
+          "id": "s177",
+          "sno": 177,
+          "name": "Thermodynamic modelling (FactSage)"
+        },
+        {
+          "id": "s178",
+          "sno": 178,
+          "name": "Digital twin concepts"
+        },
+        {
+          "id": "s179",
+          "sno": 179,
+          "name": "Machine learning and AI fundamentals"
+        },
+        {
+          "id": "s180",
+          "sno": 180,
+          "name": "ERP, CRM and database software use"
+        },
+        {
+          "id": "s181",
+          "sno": 181,
+          "name": "Version control basics (Git)"
+        },
+        {
+          "id": "s182",
+          "sno": 182,
+          "name": "Dashboard and reporting tools"
+        }
+      ]
+    },
+    {
+      "code": "M",
+      "name": "Project & Operations Management",
+      "weight": 4,
+      "skills": [
+        {
+          "id": "s183",
+          "sno": 183,
+          "name": "Project planning and scheduling (Gantt)"
+        },
+        {
+          "id": "s184",
+          "sno": 184,
+          "name": "Milestone and deliverable tracking"
+        },
+        {
+          "id": "s185",
+          "sno": 185,
+          "name": "Stakeholder management"
+        },
+        {
+          "id": "s186",
+          "sno": 186,
+          "name": "Risk identification and mitigation"
+        },
+        {
+          "id": "s187",
+          "sno": 187,
+          "name": "Budget and cost control"
+        },
+        {
+          "id": "s188",
+          "sno": 188,
+          "name": "Cross-functional coordination"
+        },
+        {
+          "id": "s189",
+          "sno": 189,
+          "name": "Client project delivery management"
+        },
+        {
+          "id": "s190",
+          "sno": 190,
+          "name": "Meeting facilitation and minute-taking"
+        },
+        {
+          "id": "s191",
+          "sno": 191,
+          "name": "Resource allocation"
+        },
+        {
+          "id": "s192",
+          "sno": 192,
+          "name": "Process improvement and Kaizen"
+        }
+      ]
+    },
+    {
+      "code": "N",
+      "name": "Communication & Language",
+      "weight": 4,
+      "skills": [
+        {
+          "id": "s193",
+          "sno": 193,
+          "name": "English reading comprehension"
+        },
+        {
+          "id": "s194",
+          "sno": 194,
+          "name": "English professional writing"
+        },
+        {
+          "id": "s195",
+          "sno": 195,
+          "name": "English spoken and conversational"
+        },
+        {
+          "id": "s196",
+          "sno": 196,
+          "name": "Technical English (specifications and reports)"
+        },
+        {
+          "id": "s197",
+          "sno": 197,
+          "name": "Hindi professional communication"
+        },
+        {
+          "id": "s198",
+          "sno": 198,
+          "name": "Regional language proficiency"
+        },
+        {
+          "id": "s199",
+          "sno": 199,
+          "name": "Cross-cultural and international communication"
+        },
+        {
+          "id": "s200",
+          "sno": 200,
+          "name": "Business and email etiquette"
+        },
+        {
+          "id": "s201",
+          "sno": 201,
+          "name": "Telephonic and video-call communication"
+        }
+      ]
+    },
+    {
+      "code": "O",
+      "name": "Soft Skills & Behavioral Competencies",
+      "weight": 5,
+      "skills": [
+        {
+          "id": "s202",
+          "sno": 202,
+          "name": "Verbal communication and articulation"
+        },
+        {
+          "id": "s203",
+          "sno": 203,
+          "name": "Active listening"
+        },
+        {
+          "id": "s204",
+          "sno": 204,
+          "name": "Teamwork and collaboration"
+        },
+        {
+          "id": "s205",
+          "sno": 205,
+          "name": "Time management and prioritization"
+        },
+        {
+          "id": "s206",
+          "sno": 206,
+          "name": "Problem solving and analytical thinking"
+        },
+        {
+          "id": "s207",
+          "sno": 207,
+          "name": "Attention to detail"
+        },
+        {
+          "id": "s208",
+          "sno": 208,
+          "name": "Ownership and accountability"
+        },
+        {
+          "id": "s209",
+          "sno": 209,
+          "name": "Initiative and proactiveness"
+        },
+        {
+          "id": "s210",
+          "sno": 210,
+          "name": "Adaptability and learning agility"
+        },
+        {
+          "id": "s211",
+          "sno": 211,
+          "name": "Working under pressure"
+        },
+        {
+          "id": "s212",
+          "sno": 212,
+          "name": "Conflict resolution"
+        },
+        {
+          "id": "s213",
+          "sno": 213,
+          "name": "Critical thinking and decision making"
+        },
+        {
+          "id": "s214",
+          "sno": 214,
+          "name": "Creativity and innovation"
+        },
+        {
+          "id": "s215",
+          "sno": 215,
+          "name": "Integrity and ethics"
+        },
+        {
+          "id": "s216",
+          "sno": 216,
+          "name": "Punctuality and discipline"
+        },
+        {
+          "id": "s217",
+          "sno": 217,
+          "name": "Customer-first mindset"
+        }
+      ]
+    },
+    {
+      "code": "P",
+      "name": "Leadership & Management",
+      "weight": 3,
+      "skills": [
+        {
+          "id": "s218",
+          "sno": 218,
+          "name": "Team leadership and supervision"
+        },
+        {
+          "id": "s219",
+          "sno": 219,
+          "name": "Delegation"
+        },
+        {
+          "id": "s220",
+          "sno": 220,
+          "name": "Coaching and mentoring"
+        },
+        {
+          "id": "s221",
+          "sno": 221,
+          "name": "Performance feedback and appraisal"
+        },
+        {
+          "id": "s222",
+          "sno": 222,
+          "name": "Strategic thinking"
+        },
+        {
+          "id": "s223",
+          "sno": 223,
+          "name": "Hiring and interviewing"
+        },
+        {
+          "id": "s224",
+          "sno": 224,
+          "name": "Decision making under ambiguity"
+        },
+        {
+          "id": "s225",
+          "sno": 225,
+          "name": "Change management"
+        },
+        {
+          "id": "s226",
+          "sno": 226,
+          "name": "Vision communication"
+        },
+        {
+          "id": "s227",
+          "sno": 227,
+          "name": "People and conflict management"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+node_modules/
+.env
+.env.local
+npm-debug.log*
+
+# Runtime data (DB-backed in production). The seed file data/skills.json IS tracked.
+data/db.json
+data/framework.json
+data/config.json
+data/audit.log
+data/backups/
+data/*.tmp
+*.tmp
+.vercel
+.DS_Store

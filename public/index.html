@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="METNMAT Innovations employee skill and competency assessment portal — proficiency-based compensation and promotion framework.">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0a1628">
+<title>METNMAT — Skill &amp; Competency Assessment</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=Inter:wght@400;500;600&family=Sora:wght@600;700;800&display=swap">
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap">
+    <div class="logo-mark"><svg viewBox="0 0 64 64" aria-hidden="true"><path fill="#16161a" d="M41 10h11v44H41z"/><path fill="#16161a" d="M41 10h11L23 54H12z"/><path fill="#c01d22" d="M12 10h11v44H12z"/><path fill="#c01d22" d="M12 10h11l29 44H41z"/></svg></div>
+    <div class="brand"><span class="wm"><span class="wm-red">METN</span><span class="wm-dark">MAT</span></span><small>Skill &amp; Competency Assessment</small></div>
+    <div class="right"><a href="/admin">Admin</a> &nbsp;·&nbsp; <a href="/hr">HR Dashboard</a></div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="hero">
+    <svg class="hero-grid" width="100%" height="100%" aria-hidden="true">
+      <defs>
+        <pattern id="hexes" width="56" height="48" patternUnits="userSpaceOnUse">
+          <path d="M28 2 L52 14 L52 36 L28 48 L4 36 L4 14 Z" fill="none" stroke="rgba(217,154,99,0.07)" stroke-width="1"/>
+        </pattern>
+      </defs>
+      <rect width="100%" height="100%" fill="url(#hexes)"/>
+    </svg>
+    <span class="hero-orb o1" aria-hidden="true"></span>
+    <span class="hero-orb o2" aria-hidden="true"></span>
+    <span class="hero-orb o3" aria-hidden="true"></span>
+
+    <div id="heroBadge" class="hero-badge"><span class="pulse-dot"></span>Annual assessment</div>
+    <h1>Employee Skill &amp; Competency Assessment</h1>
+    <p>A single, fair framework covering the complete company value chain — from marketing to final product delivery. Compensation and promotion are decided on <b>demonstrated proficiency</b>, not negotiation.</p>
+
+    <div class="trust-row">
+      <span class="trust-chip"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Confidential</span>
+      <span class="trust-chip"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-5"/><circle cx="12" cy="12" r="9"/></svg>HR validated</span>
+      <span class="trust-chip"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 7-8"/><path d="M14 7h6v6"/></svg>Band mapped</span>
+      <span class="trust-chip"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>Year-over-year tracking</span>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi"><b id="kDomains" data-count="16">0</b><span>Domains</span></div>
+      <div class="kpi"><b id="kSkills" data-count="227">0</b><span>Skills</span></div>
+      <div class="kpi"><b>0–5</b><span>Proficiency scale</span></div>
+      <div class="kpi"><b id="kBands" data-count="5">0</b><span>Career bands</span></div>
+    </div>
+    <div id="cycleBox"></div>
+  </section>
+
+  <div class="section-head reveal">
+    <div class="kicker">How it works</div>
+    <h2>Four steps from self-rating to career band</h2>
+  </div>
+  <div class="steps-grid">
+    <div class="step-card reveal">
+      <svg class="step-icon" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>
+      <div class="step-num">1</div>
+      <h3>Profile</h3>
+      <p>Fill in your employee profile so HR can match the assessment to your role.</p>
+    </div>
+    <div class="step-card reveal">
+      <svg class="step-icon" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><path d="M6 16l3-8 3 5 3-9 3 12"/></svg>
+      <div class="step-num">2</div>
+      <h3>Self-rate</h3>
+      <p>Rate yourself 0–5 on every skill, with evidence. Progress saves automatically.</p>
+    </div>
+    <div class="step-card reveal">
+      <svg class="step-icon" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10h8M8 14h5"/><rect x="4" y="4" width="16" height="16" rx="3"/></svg>
+      <div class="step-num">3</div>
+      <h3>Validation interview</h3>
+      <p>HR confirms or adjusts each rating in a structured follow-up interview.</p>
+    </div>
+    <div class="step-card reveal">
+      <svg class="step-icon" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V10M12 20V4M18 20v-7"/></svg>
+      <div class="step-num">4</div>
+      <h3>Band assigned</h3>
+      <p>Your validated, weighted score maps to one of five career bands.</p>
+    </div>
+  </div>
+
+  <div class="section-head reveal">
+    <div class="kicker">Proficiency scale</div>
+    <h2>How the 0–5 scale works</h2>
+  </div>
+  <section class="card reveal">
+    <div id="scaleLadder"><div class="empty loading">Loading scale…</div></div>
+  </section>
+
+  <div class="section-head reveal">
+    <div class="kicker">Guidelines</div>
+    <h2>Before you start</h2>
+  </div>
+  <section class="card reveal">
+    <ul class="rules">
+      <li>Fill in your <b>employee profile</b> first — HR uses it to match the assessment to the right role.</li>
+      <li>Rate yourself from <b>0 to 5</b> on <b>every skill</b>. Enter 0 explicitly where there is no exposure — do not skip any skill.</li>
+      <li>Use the <b>evidence</b> field to note projects, tools, certifications, or examples that prove the rating.</li>
+      <li><b>Rate honestly.</b> Every rating is validated in a follow-up interview, and over-claiming counts against the review.</li>
+      <li>Your progress is <b>saved automatically</b> on this device — close the page and continue any time.</li>
+      <li>One submission per employee per assessment cycle. Contact HR if your assessment needs to be redone.</li>
+    </ul>
+  </section>
+
+  <div class="section-head reveal">
+    <div class="kicker">Coverage</div>
+    <h2>Domains covered in this assessment</h2>
+  </div>
+  <div class="domain-grid" id="domainGrid"></div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="f-brand"><span class="wm"><span class="wm-red">METN</span><span class="wm-dark">MAT</span></span> Innovations Pvt. Ltd.</div>
+    <div class="muted" style="color:#8fa3b6">Proficiency-based compensation &amp; promotion framework</div>
+    <div class="f-links"><a href="/assessment">Start assessment</a><a href="/hr">HR</a><a href="/admin">Admin</a></div>
+  </div>
+</footer>
+
+<script src="/home.js"></script>
+</body>
+</html>
