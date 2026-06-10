@@ -184,6 +184,7 @@ const audit = (event, req, detail) => store.appendAudit({ ts: new Date().toISOSt
 
 // ---------------------------------------------------------------- auth (timing-safe + lockout)
 const authFails = new Map();
+const lastLoginAudit = new Map(); // ip+role -> ts, so logins are logged without flooding the audit trail
 const LOCK_AFTER = 8, LOCK_MS = 15 * 60 * 1000;
 const keyEq = (a, b) => { const x = Buffer.from(a || ''), y = Buffer.from(b || ''); return x.length === y.length && crypto.timingSafeEqual(x, y); };
 
@@ -206,6 +207,12 @@ function makeAuth(level) {
     }
     authFails.delete(ip);
     req.isAdmin = isAdmin;
+    // audit login activity (one entry per ip+role per 6h, not per request)
+    const lk = ip + ':' + (isAdmin ? 'director' : 'hr');
+    if (Date.now() - (lastLoginAudit.get(lk) || 0) > 6 * 3600e3) {
+      lastLoginAudit.set(lk, Date.now());
+      audit('auth.login', req, { role: isAdmin ? 'director' : 'hr' });
+    }
     next();
   };
 }
