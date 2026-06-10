@@ -248,8 +248,8 @@ async function renderUsers() {
 function renderLogin(msg) {
   app.innerHTML = `
     <div class="card login-card">
-      <div class="login-brand"><span class="wm"><span class="wm-red">SC</span><span class="wm-dark">ORA</span></span>
-        <div class="muted" style="font-size:12px;letter-spacing:1.5px;text-transform:uppercase">HR &amp; Director Console</div></div>
+      <div class="login-brand"><img src="/logo-metnmat.png" alt="METNMAT" class="login-logo">
+        <div class="muted" style="font-size:12px;letter-spacing:1.5px;text-transform:uppercase">SCORA · HR &amp; Director Console</div></div>
       <div id="loginForms">
         <label for="uIn">Username</label>
         <input type="text" id="uIn" autocomplete="username">

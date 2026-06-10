@@ -14,7 +14,7 @@ let DATA = null;            // framework
 let CYCLE = null;           // { id, name, opensAt, closesAt, durationMinutes, isLive, mode }
 let DEADLINE = null;        // effective hard-stop ISO string for this employee (or null)
 let TOKEN = localStorage.getItem(TOKEN_KEY) || '';
-let state = { step: -1, profile: {}, ratings: {} };
+let state = { step: -1, frontier: 0, profile: {}, ratings: {} }; // frontier = furthest domain reached; earlier domains lock
 let pendingSave = {};       // ratings changed since last save
 let saveTimer = null, saveStatus = 'idle', lastSavedAt = null, countdownTimer = null, locked = false;
 
@@ -25,6 +25,32 @@ function toast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
   clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+// Confirm before a domain locks — answers are final once the employee continues.
+function confirmLock(domainName, last) {
+  return new Promise(resolve => {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-backdrop';
+    wrap.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+        <div class="modal-ico">🔒</div>
+        <h3 id="mTitle">Lock “${esc(domainName)}”?</h3>
+        <p>Once you continue, your answers for this domain are final — you won't be able to come back and change them. ${last ? 'You\'ll go to the final review.' : 'Only the next domain\'s questions will appear.'}</p>
+        <div class="modal-actions">
+          <button class="btn ghost" data-act="cancel">Review again</button>
+          <button class="btn" data-act="ok">${last ? 'Lock &amp; review' : 'Lock &amp; continue'}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(wrap);
+    requestAnimationFrame(() => wrap.classList.add('show'));
+    const close = val => { wrap.classList.remove('show'); setTimeout(() => wrap.remove(), 220); resolve(val); };
+    wrap.querySelector('[data-act="cancel"]').onclick = () => close(false);
+    wrap.querySelector('[data-act="ok"]').onclick = () => close(true);
+    wrap.addEventListener('mousedown', e => { if (e.target === wrap) close(false); });
+    document.addEventListener('keydown', function onKey(e) { if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); close(false); } });
+    wrap.querySelector('[data-act="ok"]').focus();
+  });
 }
 
 /* ---------------- autosave ---------------- */
@@ -157,9 +183,12 @@ function progressShell(inner) {
   const stepLabel = state.step === -1 ? 'Employee Profile'
     : state.step >= DATA.domains.length ? 'Review & Submit'
     : `Domain ${DATA.domains[state.step].code} of ${DATA.domains[DATA.domains.length - 1].code}`;
+  // forward-only: dots are a progress indicator, not navigation. Passed domains
+  // are locked, the current one is highlighted, upcoming ones are dimmed.
   const dots = DATA.domains.map((d, i) => {
-    const done = domainRated(d) === requiredSkills(d).length;
-    return `<button class="ddot ${i === state.step ? 'cur' : done ? 'done' : ''}" data-goto="${i}" title="${esc(d.name)}" aria-label="Go to domain ${d.code}: ${esc(d.name)}">${d.code}</button>`;
+    const locked = i < state.frontier;
+    const cls = i === state.step ? 'cur' : locked ? 'done locked' : 'upcoming';
+    return `<span class="ddot ${cls}" title="${esc(d.name)}${locked ? ' — locked' : ''}" aria-label="Domain ${d.code}: ${esc(d.name)}${locked ? ', locked' : i === state.step ? ', current' : ', upcoming'}">${d.code}</span>`;
   }).join('');
   return `
     <div class="progress-shell">
@@ -189,6 +218,7 @@ async function startSession(code) {
   state.profile = j.draft.profile || {};
   state.ratings = j.draft.ratings || {};
   state.step = j.resumed ? (j.draft.step ?? 0) : 0;
+  state.frontier = state.step;
   if (j.resumed) toast('Welcome back — your earlier progress was restored.');
   else if (CYCLE.durationMinutes) toast(`You have ${CYCLE.durationMinutes} minutes to complete the assessment once you begin.`);
   if (CYCLE.mode === 'exception') toast('Exception access granted by HR — you can complete your assessment now.');
@@ -198,8 +228,8 @@ async function startSession(code) {
 function renderProfile() {
   app.innerHTML = `
     <div class="card login-card">
-      <div class="login-brand"><span class="wm"><span class="wm-red">SC</span><span class="wm-dark">ORA</span></span>
-        <div class="muted" style="font-size:12px;letter-spacing:1.5px;text-transform:uppercase">Employee Assessment</div></div>
+      <div class="login-brand"><img src="/logo-metnmat.png" alt="METNMAT" class="login-logo">
+        <div class="muted" style="font-size:12px;letter-spacing:1.5px;text-transform:uppercase">SCORA · Employee Assessment</div></div>
 
       <div id="loginForm">
         <h2 style="font-size:18px;margin-bottom:4px">Log in</h2>
@@ -398,7 +428,7 @@ function renderProfile() {
       : `<p class="muted" style="margin-bottom:14px">Please save this code now — write it down or copy it.</p>`;
     app.innerHTML = `
       <div class="card login-card" style="text-align:center">
-        <div class="login-brand"><span class="wm"><span class="wm-red">SC</span><span class="wm-dark">ORA</span></span></div>
+        <div class="login-brand"><img src="/logo-metnmat.png" alt="METNMAT" class="login-logo"></div>
         <h2 style="font-size:18px">Welcome, ${esc(name)}</h2>
         <p class="muted" style="margin-bottom:14px">This is your SCORA code — it is your <b>password</b>. Save it; you'll need it to log in and to view your results later.</p>
         <div class="scora-code">${esc(code)}</div>
@@ -455,9 +485,9 @@ function renderDomain() {
     </div>
     ${cards}
     <div class="error-msg" id="err" hidden></div>
-    <div class="wiz-nav">
-      <button class="btn ghost" id="back">&larr; Back</button>
-      <button class="btn" id="next">${state.step === DATA.domains.length - 1 ? 'Review & Submit' : 'Next Domain'} &rarr;</button>
+    <p class="lock-note">🔒 Answers lock once you continue — check this domain before moving on. Only the next questions will appear.</p>
+    <div class="wiz-nav forward">
+      <button class="btn" id="next">${state.step === DATA.domains.length - 1 ? 'Lock &amp; review' : 'Lock &amp; continue'} &rarr;</button>
     </div>
   `);
   startCountdown();
@@ -493,8 +523,7 @@ function renderDomain() {
     state.ratings[id] = { ...(state.ratings[id] || {}), evidence: el.value };
     queueSave({ ratings: { [id]: state.ratings[id] } });
   }));
-  document.getElementById('back').onclick = () => { state.step--; if (state.step >= 0) queueSave(); render(); window.scrollTo(0, 0); };
-  document.getElementById('next').onclick = () => {
+  document.getElementById('next').onclick = async () => {
     const un = requiredSkills(d).filter(sk => !answered(sk));
     if (un.length) {
       const err = document.getElementById('err');
@@ -503,7 +532,10 @@ function renderDomain() {
       document.getElementById('card-' + un[0].id).scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
-    state.step++; queueSave(); render(); window.scrollTo(0, 0);
+    const last = state.step === DATA.domains.length - 1;
+    if (!(await confirmLock(d.name, last))) return;   // forward-only: confirm before locking
+    state.step++; state.frontier = Math.max(state.frontier, state.step);
+    await flushSave(); render(); window.scrollTo(0, 0);
   };
   bindDots();
 }
@@ -517,14 +549,14 @@ function renderReview() {
     const selfScored = d.skills.filter(sk => state.ratings[sk.id] && state.ratings[sk.id].self != null);
     const avg = selfScored.length ? (selfScored.reduce((s, sk) => s + (state.ratings[sk.id].self || 0), 0) / selfScored.length).toFixed(2) : '—';
     const ok = n === requiredSkills(d).length;
-    return `<tr class="clickable" data-goto-row="${DATA.domains.indexOf(d)}">
+    return `<tr>
       <td><span class="lvl lvl-domain">${d.code}</span></td>
       <td>${esc(d.name)}</td><td>${n}/${requiredSkills(d).length}</td><td>${ok ? avg : '<span class="badge pending">incomplete</span>'}</td></tr>`;
   }).join('');
 
   app.innerHTML = progressShell(`
     <h1>Review &amp; Submit</h1>
-    <p class="sub">${CYCLE ? `Cycle: <b>${esc(CYCLE.name)}</b>. ` : ''}Check your domain summary below — click a row to revisit that domain. Once submitted, your assessment goes to HR for the validation interview.</p>
+    <p class="sub">${CYCLE ? `Cycle: <b>${esc(CYCLE.name)}</b>. ` : ''}Here's a summary of every domain you completed. Your answers are locked — once you submit, your assessment goes to HR for the validation interview.</p>
     <div class="card">
       <table class="scale-table">
         <thead><tr><th></th><th>Domain</th><th>Rated</th><th>Self Avg</th></tr></thead>
@@ -537,18 +569,13 @@ function renderReview() {
       <label class="agree-row"><input type="checkbox" id="agree"> I agree</label>
     </div>
     <div class="error-msg" id="err" hidden></div>
-    <div class="wiz-nav">
-      <button class="btn ghost" id="back">&larr; Back</button>
+    <div class="wiz-nav forward">
       <button class="btn" id="submit" ${rated < total ? 'disabled' : ''}>Submit Assessment</button>
     </div>
   `);
   startCountdown();
   setSaveStatus(saveStatus);
 
-  app.querySelectorAll('[data-goto-row]').forEach(tr => tr.onclick = () => {
-    state.step = Number(tr.dataset.gotoRow); queueSave(); render(); window.scrollTo(0, 0);
-  });
-  document.getElementById('back').onclick = () => { state.step--; queueSave(); render(); window.scrollTo(0, 0); };
   document.getElementById('submit').onclick = async () => {
     const err = document.getElementById('err'); err.hidden = true;
     if (!document.getElementById('agree').checked) { err.hidden = false; err.textContent = 'Please tick the declaration before submitting.'; return; }
@@ -585,11 +612,8 @@ function renderReview() {
   bindDots();
 }
 
-function bindDots() {
-  document.querySelectorAll('.ddot').forEach(b => b.onclick = () => {
-    state.step = Number(b.dataset.goto); queueSave(); render(); window.scrollTo(0, 0);
-  });
-}
+// domains are forward-only — the progress dots are display-only (no navigation)
+function bindDots() { /* no-op */ }
 
 function render() {
   if (locked) return;
@@ -615,6 +639,7 @@ function render() {
         state.profile = j.draft.profile || {};
         state.ratings = j.draft.ratings || {};
         state.step = Math.min(j.draft.step ?? 0, DATA.domains.length);
+        state.frontier = state.step;
         if (!j.accessible) return lockWizard(j.expired
           ? 'Your time limit for this assessment has elapsed. Your progress is saved — contact HR if you need more time.'
           : 'The assessment window has closed. Your progress is saved — contact HR if you need an exception.');

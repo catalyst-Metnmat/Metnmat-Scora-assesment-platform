@@ -8,8 +8,8 @@ const fmtDate = iso => iso ? new Date(iso).toLocaleDateString('en-IN', { day: 'n
 function renderGate(msg) {
   app.innerHTML = `
     <div class="card login-card">
-      <div class="login-brand"><span class="wm"><span class="wm-red">SC</span><span class="wm-dark">ORA</span></span>
-        <div class="muted" style="font-size:12px;letter-spacing:1.5px;text-transform:uppercase">My Results</div></div>
+      <div class="login-brand"><img src="/logo-metnmat.png" alt="METNMAT" class="login-logo">
+        <div class="muted" style="font-size:12px;letter-spacing:1.5px;text-transform:uppercase">SCORA · My Results</div></div>
       <p class="muted" style="margin-bottom:14px">View your own assessment history, scores and skill profile. Log in with your name and 4-digit SCORA code.</p>
       <label for="mName">Full name</label>
       <input type="text" id="mName" autocomplete="name">

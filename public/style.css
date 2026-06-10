@@ -66,13 +66,19 @@ h1, h2, h3, .brand, .btn { font-family: var(--font-head); }
 @keyframes shimmer { to { background-position: 200% 0; } }
 .topbar .wrap { display: flex; align-items: center; gap: 13px; }
 .logo-mark {
-  width: 44px; height: 44px; border-radius: 11px; flex-shrink: 0;
+  height: 42px; width: auto; border-radius: 11px; flex-shrink: 0;
   background: #fff;
   display: grid; place-items: center;
+  padding: 0 12px;
   box-shadow: 0 5px 14px rgba(6, 14, 27, .35);
   position: relative; overflow: hidden;
+  transition: transform .2s var(--ease), box-shadow .2s var(--ease);
 }
+.logo-mark:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(6, 14, 27, .45); }
 .logo-mark svg { width: 30px; height: 30px; display: block; }
+.logo-img { height: 26px; width: auto; display: block; }
+/* stacked METNMAT logo on white login / result cards */
+.login-logo { display: block; height: 88px; width: auto; margin: 2px auto 6px; }
 .logo-mark::after {
   content: ""; position: absolute; inset: 0;
   background: linear-gradient(115deg, transparent 30%, rgba(255, 255, 255, .35) 50%, transparent 70%);
@@ -399,14 +405,18 @@ ul.rules li::before {
 @keyframes slide { from { background-position: -60% 0; } to { background-position: 160% 0; } }
 
 .domain-dots { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 9px; }
+/* forward-only progress dots — display only (not clickable) */
 .ddot {
-  width: 28px; height: 28px; border-radius: 8px; border: none; cursor: pointer;
+  width: 28px; height: 28px; border-radius: 8px; border: none; cursor: default;
+  display: grid; place-items: center;
   font-size: 11px; font-weight: 700; color: var(--navy-700); font-family: var(--font-head);
-  background: var(--line); transition: all .15s var(--ease);
+  background: var(--line); transition: background .25s var(--ease), color .25s var(--ease), transform .25s var(--ease);
 }
-.ddot:hover { transform: translateY(-2px); }
-.ddot.done { background: #cfe8db; color: var(--green); }
-.ddot.cur { background: var(--navy-800); color: var(--copper-light); box-shadow: 0 4px 10px -3px rgba(10, 22, 40, .5); }
+.ddot.upcoming { opacity: .55; }
+.ddot.done, .ddot.locked { background: #cfe8db; color: var(--green); }
+.ddot.locked { position: relative; }
+.ddot.locked::after { content: "🔒"; position: absolute; top: -5px; right: -4px; font-size: 8px; opacity: .85; }
+.ddot.cur { background: var(--navy-800); color: var(--copper-light); box-shadow: 0 4px 12px -3px rgba(10, 22, 40, .5); transform: scale(1.08); }
 
 .domain-head { display: flex; align-items: center; gap: 14px; margin: 26px 0 16px; animation: fadeUp .5s var(--ease) both; }
 .domain-chip {
@@ -448,6 +458,37 @@ ul.rules li::before {
 .evidence input { font-size: 13.5px; padding: 9px 12px; }
 
 .wiz-nav { display: flex; justify-content: space-between; gap: 12px; margin-top: 26px; }
+.wiz-nav.forward { justify-content: flex-end; }
+.wiz-nav.forward .btn { min-width: 220px; }
+
+/* forward-only lock note under each domain */
+.lock-note {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 22px; padding: 11px 14px;
+  background: var(--copper-pale); border: 1px solid #f3cdce; border-radius: 10px;
+  font-size: 13px; color: var(--navy-800); line-height: 1.5;
+}
+
+/* confirm-lock modal */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(6, 14, 27, .55); backdrop-filter: blur(2px);
+  display: grid; place-items: center; padding: 20px;
+  opacity: 0; transition: opacity .2s var(--ease);
+}
+.modal-backdrop.show { opacity: 1; }
+.modal {
+  background: var(--card); border-radius: var(--radius); max-width: 420px; width: 100%;
+  padding: 26px 26px 22px; text-align: center; box-shadow: var(--shadow-lg);
+  transform: translateY(12px) scale(.97); transition: transform .22s var(--ease);
+}
+.modal-backdrop.show .modal { transform: translateY(0) scale(1); }
+.modal-ico { font-size: 30px; margin-bottom: 6px; }
+.modal h3 { font-size: 19px; margin-bottom: 8px; }
+.modal p { font-size: 14px; color: var(--muted); line-height: 1.55; margin-bottom: 20px; }
+.modal-actions { display: flex; gap: 10px; justify-content: center; }
+.modal-actions .btn { min-width: 130px; }
+@media (max-width: 440px) { .modal-actions { flex-direction: column-reverse; } .modal-actions .btn { width: 100%; } }
 
 /* success screen */
 .done-box { text-align: center; padding: 54px 24px; position: relative; overflow: hidden; }
@@ -811,6 +852,20 @@ main.wrap > .card, main.wrap > section.card { animation: fadeUp .55s var(--ease)
   body { background: #fff; }
   .card, details.domain-block { box-shadow: none; break-inside: avoid; }
 }
+
+/* ---------------- smoothness polish ---------------- */
+body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; }
+::selection { background: var(--copper); color: #fff; }
+img { -webkit-user-drag: none; user-select: none; }
+/* keep cards/buttons from popping abruptly */
+.card { transition: box-shadow .2s var(--ease), transform .2s var(--ease), border-color .2s var(--ease); }
+.btn { transition: background-color .18s var(--ease), background-position .4s var(--ease), transform .12s var(--ease), box-shadow .2s var(--ease), opacity .18s; }
+.btn:active { transform: translateY(1px) scale(.99); }
+a { transition: color .15s var(--ease); }
+/* sticky progress header shouldn't hide a card we scroll to */
+.skill-card { scroll-margin-top: 96px; }
+/* gentle entrance for the whole wizard step */
+.domain-head, .login-card, .done-box { will-change: transform, opacity; }
 
 /* ---------------- reduced motion ---------------- */
 @media (prefers-reduced-motion: reduce) {
