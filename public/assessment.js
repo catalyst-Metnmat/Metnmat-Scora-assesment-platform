@@ -203,78 +203,177 @@ function renderProfile() {
 
       <div id="loginForm">
         <h2 style="font-size:18px;margin-bottom:4px">Log in</h2>
-        <p class="muted" style="margin-bottom:12px">Enter your name and your 4-digit SCORA code.</p>
-        <label for="lName">Full name</label>
-        <input type="text" id="lName" autocomplete="name">
-        <label for="lCode" style="margin-top:10px">SCORA code (4 digits)</label>
-        <input type="text" id="lCode" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="••••">
+        <p class="muted" style="margin-bottom:14px">Your name + the 4-digit SCORA code you received when you registered.</p>
+        <div class="field">
+          <label for="lName">Full name</label>
+          <input type="text" id="lName" autocomplete="name" autocapitalize="words" placeholder="e.g. Priya Sharma" enterkeyhint="next">
+          <div class="f-err" id="lNameErr" hidden></div>
+        </div>
+        <div class="field">
+          <label id="lCodeLabel">SCORA code</label>
+          <div class="code-cells" id="lCells" role="group" aria-labelledby="lCodeLabel">
+            <input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="2" aria-label="Digit 1">
+            <input type="text" inputmode="numeric" autocomplete="off" maxlength="2" aria-label="Digit 2">
+            <input type="text" inputmode="numeric" autocomplete="off" maxlength="2" aria-label="Digit 3">
+            <input type="text" inputmode="numeric" autocomplete="off" maxlength="2" aria-label="Digit 4">
+          </div>
+          <p class="f-hint">It was shown when you registered and emailed to you. You can paste it here.</p>
+          <div class="f-err" id="lCodeErr" hidden></div>
+        </div>
         <div class="error-msg" id="lErr" hidden></div>
-        <div class="actions mt"><button class="btn" id="loginBtn">Log in &amp; start</button></div>
-        <p class="muted mt" style="text-align:center">First time here? <a href="#" id="toReg">Register to get your SCORA code</a></p>
+        <button class="btn btn-block mt" id="loginBtn">Log in &amp; start</button>
+        <p class="entry-foot muted">First time here? <a href="#" id="toReg">Register — it takes under a minute</a></p>
       </div>
 
       <div id="regForm" hidden>
-        <h2 style="font-size:18px;margin-bottom:4px">Register</h2>
-        <p class="muted" style="margin-bottom:12px">All fields are required. You'll get a 4-digit SCORA code — that's your password.</p>
-        <label for="rName">Full name *</label>
-        <input type="text" id="rName" autocomplete="name">
-        <label for="rMobile" style="margin-top:10px">Mobile number *</label>
-        <input type="text" id="rMobile" inputmode="tel" autocomplete="tel">
-        <label for="rEmail" style="margin-top:10px">Email *</label>
-        <input type="text" id="rEmail" inputmode="email" autocomplete="email">
-        <label for="rDoj" style="margin-top:10px">Joining month &amp; year *</label>
-        <input type="month" id="rDoj">
+        <h2 style="font-size:18px;margin-bottom:4px">Create your SCORA account</h2>
+        <p class="muted" style="margin-bottom:14px">Four quick details. Your 4-digit SCORA code appears instantly — on screen and in your email.</p>
+        <div class="field">
+          <label for="rName">Full name</label>
+          <input type="text" id="rName" autocomplete="name" autocapitalize="words" placeholder="e.g. Priya Sharma" enterkeyhint="next">
+          <p class="f-hint">Exactly as HR knows you — this becomes your username.</p>
+          <div class="f-err" id="rNameErr" hidden></div>
+        </div>
+        <div class="field">
+          <label for="rMobile">Mobile number</label>
+          <input type="tel" id="rMobile" inputmode="numeric" autocomplete="tel-national" maxlength="10" placeholder="10-digit mobile number" enterkeyhint="next">
+          <div class="f-err" id="rMobileErr" hidden></div>
+        </div>
+        <div class="field">
+          <label for="rEmail">Email</label>
+          <input type="email" id="rEmail" autocomplete="email" autocapitalize="off" spellcheck="false" placeholder="you@example.com" enterkeyhint="next">
+          <p class="f-hint">Your SCORA code is sent here. One account per email.</p>
+          <div class="f-err" id="rEmailErr" hidden></div>
+        </div>
+        <div class="field">
+          <label for="rDoj">When did you join METNMAT?</label>
+          <input type="month" id="rDoj" enterkeyhint="done">
+          <p class="f-hint">Month and year are enough.</p>
+          <div class="f-err" id="rDojErr" hidden></div>
+        </div>
+        <div class="entry-note"><span class="ico">🔐</span><span>Your details go to HR only. The 4-digit code is your password — keep it safe.</span></div>
         <div class="error-msg" id="rErr" hidden></div>
-        <div class="actions mt"><button class="btn" id="regBtn">Create my SCORA code</button></div>
-        <p class="muted mt" style="text-align:center">Already have a code? <a href="#" id="toLogin">Back to log in</a></p>
+        <button class="btn btn-block mt" id="regBtn">Create my SCORA code</button>
+        <p class="entry-foot muted">Already have a code? <a href="#" id="toLogin">Back to log in</a></p>
       </div>
     </div>`;
 
-  const show = which => { document.getElementById('loginForm').hidden = which !== 'login'; document.getElementById('regForm').hidden = which !== 'reg'; };
-  document.getElementById('toReg').onclick = e => { e.preventDefault(); show('reg'); document.getElementById('rName').focus(); };
-  document.getElementById('toLogin').onclick = e => { e.preventDefault(); show('login'); document.getElementById('lName').focus(); };
+  const $id = id => document.getElementById(id);
+  const show = which => { $id('loginForm').hidden = which !== 'login'; $id('regForm').hidden = which !== 'reg'; };
+  $id('toReg').onclick = e => { e.preventDefault(); show('reg'); $id('rName').focus(); };
+  $id('toLogin').onclick = e => { e.preventDefault(); show('login'); $id('lName').focus(); };
+
+  const showErr = (id, msg) => { const el = $id(id); el.hidden = false; el.textContent = msg; };
+  const hideErr = id => { $id(id).hidden = true; };
+
+  // joining month can't be in the future
+  $id('rDoj').max = new Date().toISOString().slice(0, 7);
+
+  // ---- SCORA code cells: auto-advance, backspace, arrow keys, paste ----
+  const cells = Array.from($id('lCells').querySelectorAll('input'));
+  const codeValue = () => cells.map(c => c.value).join('');
+  cells.forEach((c, i) => {
+    c.addEventListener('input', () => {
+      const v = c.value.replace(/\D/g, '');
+      c.value = v.slice(0, 1);
+      // typing into a filled cell: carry the extra digit forward
+      if (v.length > 1 && i < cells.length - 1) cells[i + 1].value = v.slice(1, 2);
+      if (c.value && i < cells.length - 1) cells[i + 1].focus();
+      if (/^\d{4}$/.test(codeValue())) hideErr('lCodeErr');
+    });
+    c.addEventListener('keydown', e => {
+      if (e.key === 'Backspace' && !c.value && i > 0) { e.preventDefault(); cells[i - 1].value = ''; cells[i - 1].focus(); }
+      else if (e.key === 'ArrowLeft' && i > 0) cells[i - 1].focus();
+      else if (e.key === 'ArrowRight' && i < cells.length - 1) cells[i + 1].focus();
+      else if (e.key === 'Enter') login();
+    });
+    c.addEventListener('paste', e => {
+      const digits = ((e.clipboardData || window.clipboardData).getData('text') || '').replace(/\D/g, '').slice(0, 4);
+      if (!digits) return;
+      e.preventDefault();
+      cells.forEach((cc, j) => { cc.value = digits[j] || ''; });
+      cells[Math.min(digits.length, cells.length - 1)].focus();
+    });
+    c.addEventListener('focus', () => c.select());
+  });
+  $id('lName').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); cells[0].focus(); } });
+
+  // ---- register: per-field validation with friendly messages ----
+  const validators = {
+    rName: v => v.trim().length >= 3 ? '' : 'Please enter your full name.',
+    rMobile: v => /^\d{10}$/.test(v) ? '' : 'Enter your 10-digit mobile number.',
+    rEmail: v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) ? '' : 'Enter a valid email — your SCORA code is sent there.',
+    rDoj: v => /^\d{4}-(0[1-9]|1[0-2])$/.test(v) ? '' : 'Pick the month and year you joined.'
+  };
+  const checkField = (id, force) => {
+    const input = $id(id), msg = validators[id](input.value);
+    input.classList.toggle('ok', !msg);
+    input.classList.toggle('bad', !!msg && (force || input.value !== ''));
+    input.closest('.field').classList.toggle('ok', !msg);
+    if (msg && (force || input.value !== '')) showErr(id + 'Err', msg); else hideErr(id + 'Err');
+    return !msg;
+  };
+  const regFields = ['rName', 'rMobile', 'rEmail', 'rDoj'];
+  regFields.forEach((id, i) => {
+    const input = $id(id);
+    input.addEventListener('blur', () => { if (input.value) checkField(id); });
+    input.addEventListener('input', () => { if (input.classList.contains('bad')) checkField(id); });
+    input.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      if (i < regFields.length - 1) $id(regFields[i + 1]).focus(); else register();
+    });
+  });
+  $id('rMobile').addEventListener('input', function () { this.value = this.value.replace(/\D/g, '').slice(0, 10); });
+  $id('rEmail').addEventListener('blur', function () { this.value = this.value.trim().toLowerCase(); });
 
   const login = async () => {
-    const lErr = document.getElementById('lErr'); lErr.hidden = true;
-    const name = document.getElementById('lName').value.trim();
-    const code = document.getElementById('lCode').value.trim();
-    if (!name || !/^\d{4}$/.test(code)) { lErr.hidden = false; lErr.textContent = 'Enter your name and your 4-digit SCORA code.'; return; }
-    const btn = document.getElementById('loginBtn'); btn.disabled = true; btn.textContent = 'Logging in…';
+    hideErr('lErr');
+    const name = $id('lName').value.trim();
+    const code = codeValue();
+    let ok = true;
+    if (!name) { showErr('lNameErr', 'Enter your full name.'); ok = false; } else hideErr('lNameErr');
+    if (!/^\d{4}$/.test(code)) { showErr('lCodeErr', 'Enter all 4 digits of your SCORA code.'); ok = false; } else hideErr('lCodeErr');
+    if (!ok) { (name ? (cells.find(c => !c.value) || cells[3]) : $id('lName')).focus(); return; }
+    const btn = $id('loginBtn'); btn.disabled = true; btn.textContent = 'Logging in…';
     try {
       const r = await fetch('/api/employee/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, code }) });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'Login failed.');
       await startSession(j.code);
-    } catch (e) { lErr.hidden = false; lErr.textContent = e.message; btn.disabled = false; btn.textContent = 'Log in & start'; }
+    } catch (e) { showErr('lErr', e.message); btn.disabled = false; btn.textContent = 'Log in & start'; }
   };
   const register = async () => {
-    const rErr = document.getElementById('rErr'); rErr.hidden = true;
-    const name = document.getElementById('rName').value.trim();
-    const mobile = document.getElementById('rMobile').value.trim();
-    const email = document.getElementById('rEmail').value.trim();
-    const doj = document.getElementById('rDoj').value;
-    if (!name || !mobile || !email || !doj) { rErr.hidden = false; rErr.textContent = 'All fields are required.'; return; }
-    const btn = document.getElementById('regBtn'); btn.disabled = true; btn.textContent = 'Creating…';
+    hideErr('rErr');
+    const bad = regFields.filter(id => !checkField(id, true));
+    if (bad.length) { $id(bad[0]).focus(); return; }
+    const name = $id('rName').value.trim();
+    const mobile = $id('rMobile').value.trim();
+    const email = $id('rEmail').value.trim().toLowerCase();
+    const doj = $id('rDoj').value;
+    const btn = $id('regBtn'); btn.disabled = true; btn.textContent = 'Creating your code…';
     try {
       const r = await fetch('/api/employee/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, mobile, email, doj }) });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'Registration failed.');
-      showCode(j.code, j.name);
-    } catch (e) { rErr.hidden = false; rErr.textContent = e.message; btn.disabled = false; btn.textContent = 'Create my SCORA code'; }
+      showCode(j.code, j.name, j.emailed, email);
+    } catch (e) { showErr('rErr', e.message); btn.disabled = false; btn.textContent = 'Create my SCORA code'; }
   };
-  document.getElementById('loginBtn').onclick = login;
-  document.getElementById('regBtn').onclick = register;
-  document.getElementById('lCode').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
-  document.getElementById('rEmail').addEventListener('keydown', e => { if (e.key === 'Enter') register(); });
+  $id('loginBtn').onclick = login;
+  $id('regBtn').onclick = register;
 
   // after registration, show the generated SCORA code once, then continue
-  function showCode(code, name) {
+  function showCode(code, name, emailed, email) {
+    const mailLine = emailed
+      ? `<p class="muted" style="margin-bottom:14px">We've also emailed your code to <b>${esc(email)}</b>. Check your inbox (and spam folder).</p>`
+      : `<p class="muted" style="margin-bottom:14px">Please save this code now — write it down or copy it.</p>`;
     app.innerHTML = `
       <div class="card login-card" style="text-align:center">
         <div class="login-brand"><span class="wm"><span class="wm-red">SC</span><span class="wm-dark">ORA</span></span></div>
         <h2 style="font-size:18px">Welcome, ${esc(name)}</h2>
         <p class="muted" style="margin-bottom:14px">This is your SCORA code — it is your <b>password</b>. Save it; you'll need it to log in and to view your results later.</p>
         <div class="scora-code">${esc(code)}</div>
+        ${mailLine}
         <div class="actions mt" style="justify-content:center">
           <button class="btn ghost small" id="copyCode">Copy code</button>
           <button class="btn" id="startNow">Start assessment &rarr;</button>

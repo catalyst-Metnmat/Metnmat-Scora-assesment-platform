@@ -18,7 +18,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const store = require('./store');
-const { notify } = require('./notify');
+const { notify, sendEmail } = require('./notify');
 const reports = require('./reports');
 
 const PORT = Number(process.env.PORT) || 3010;
@@ -371,6 +371,52 @@ async function generateScoraCode() {
   return null; // directory effectively full (>~10k employees)
 }
 
+// Build the branded "your SCORA credentials" email (username = name, password = 4-digit code).
+function scoraCredentialEmail({ name, code, loginUrl }) {
+  const text =
+    `Hello ${name},\n\n` +
+    `Your SCORA account is ready. Use these credentials to log in and complete your skill assessment:\n\n` +
+    `  Username (your name): ${name}\n` +
+    `  SCORA code (password): ${code}\n\n` +
+    `Keep this code safe — it is your password to start the assessment and to view your results later.\n\n` +
+    `Log in: ${loginUrl}\n\n` +
+    `— SCORA · METNMAT Innovations Pvt. Ltd.`;
+  const html =
+    `<div style="margin:0;padding:24px 0;background:#0a1628;font-family:Inter,Segoe UI,Arial,sans-serif">` +
+      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">` +
+        `<table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;width:100%;background:#0e1c33;border:1px solid #1c2c4a;border-radius:14px;overflow:hidden">` +
+          `<tr><td style="padding:28px 32px 8px;text-align:center">` +
+            `<div style="font-family:Cinzel,Georgia,serif;font-size:26px;letter-spacing:3px;color:#fff;font-weight:700">SCORA</div>` +
+            `<div style="font-size:12px;color:#8aa0c4;letter-spacing:1px;margin-top:4px">METNMAT Innovations Pvt. Ltd.</div>` +
+          `</td></tr>` +
+          `<tr><td style="padding:8px 32px 0;color:#e6edf7;font-size:15px;line-height:1.6">` +
+            `<p style="margin:16px 0 8px">Hello <b>${name}</b>,</p>` +
+            `<p style="margin:0 0 18px;color:#b9c6dc">Your SCORA account is ready. Use the credentials below to log in and complete your skill assessment.</p>` +
+          `</td></tr>` +
+          `<tr><td style="padding:0 32px">` +
+            `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0a1628;border:1px solid #1c2c4a;border-radius:10px">` +
+              `<tr><td style="padding:14px 18px;border-bottom:1px solid #1c2c4a">` +
+                `<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#7f95ba">Username</div>` +
+                `<div style="font-size:16px;color:#fff;margin-top:3px">${name}</div>` +
+              `</td></tr>` +
+              `<tr><td style="padding:14px 18px">` +
+                `<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#7f95ba">SCORA code (password)</div>` +
+                `<div style="font-size:28px;font-weight:700;letter-spacing:8px;color:#ff5a5f;margin-top:4px;font-family:Sora,Inter,Arial,sans-serif">${code}</div>` +
+              `</td></tr>` +
+            `</table>` +
+          `</td></tr>` +
+          `<tr><td style="padding:18px 32px 4px">` +
+            `<a href="${loginUrl}" style="display:block;text-align:center;background:#c01d22;color:#fff;text-decoration:none;font-weight:600;padding:12px 0;border-radius:8px;font-size:15px">Start my assessment</a>` +
+          `</td></tr>` +
+          `<tr><td style="padding:14px 32px 28px;color:#8aa0c4;font-size:12px;line-height:1.6">` +
+            `<p style="margin:0">Keep this code safe — it is your password to start the assessment and to view your results later. If you didn't request this, you can ignore this email.</p>` +
+          `</td></tr>` +
+        `</table>` +
+      `</td></tr></table>` +
+    `</div>`;
+  return { text, html };
+}
+
 // Register: Full Name + Mobile + Email (all mandatory, email unique) → 4-digit SCORA code (password)
 app.post('/api/employee/register', submitLimit, wrap(async (req, res) => {
   const name = String((req.body || {}).name || '').trim().slice(0, 100);
@@ -388,7 +434,12 @@ app.post('/api/employee/register', submitLimit, wrap(async (req, res) => {
   const acc = { code, name, nameNorm: name.toLowerCase().replace(/\s+/g, ' '), email, emailNorm, mobile, doj, createdAt: new Date().toISOString() };
   await store.insertEmpAccount(acc);
   audit('employee.registered', req, { code, email });
-  res.json({ ok: true, code, name });
+  // Email the employee their credentials (username = name, password = SCORA code).
+  // Fire-and-forget: sendEmail never throws and no-ops when RESEND_API_KEY is unset.
+  const base = (process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+  const { text, html } = scoraCredentialEmail({ name, code, loginUrl: `${base}/assessment` });
+  const emailed = await sendEmail(email, 'Your SCORA code & login — METNMAT', text, html);
+  res.json({ ok: true, code, name, emailed });
 }));
 
 // Login: Name + 4-digit SCORA code (the code is globally unique and is the credential)
