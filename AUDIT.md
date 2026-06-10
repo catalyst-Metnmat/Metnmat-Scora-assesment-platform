@@ -41,17 +41,17 @@ Automated field-by-field comparison of the live framework vs the workbook:
 2. **Database backups on Atlas M0** — free tier has no automated backups. Mitigation: schedule a weekly `mongodump`/Excel export (the 5-sheet export is a usable snapshot). 
 3. **Rotate all secrets after deployment** (Mongo password + both keys appeared in chat). Directors can rotate keys from the UI; Mongo password via Atlas.
 
-**P1 — high value, not blocking the 2026 cycle**
-4. **Notifications** (assigned/reminder/deadline/submitted/evaluated/reopened): none. Email is the natural first step — the company already has a verified Resend account (noreply@metnmat.com). WhatsApp/in-app are future-ready asks.
-5. **Employee self-dashboard** (own history, score trends, skill profile): employees currently get only a submission confirmation; results visibility is an HR/management decision anyway — needs a policy call before building.
-6. **Formal PDF reports** (employee report, executive summary): browser print works on the validation view; a generated-PDF pipeline is absent.
-7. **Employee master-data module**: no employee directory, department/designation registries, manager hierarchy, bulk employee import, or status tracking. Profiles are self-declared per submission (workbook model). Risk: typos fragment year-over-year matching (mitigated by case-insensitive employee-ID matching).
-8. **Template library/versioning**: one live framework; importing a new one replaces it. Recommend snapshotting the framework per cycle (see §7) before authoring assessment #2.
+**P1 — ✅ ALL CLOSED (built and verified 10 Jun 2026, same day as the audit)**
+4. ~~Notifications~~ — **built**: in-app feed with unread bell, email via Resend (`RESEND_API_KEY` + `HR_NOTIFY_EMAIL` env), WhatsApp-ready transport stub, 24h deadline reminders. Events: cycle opened, submitted, evaluated, reopened, reminder.
+5. ~~Employee self-dashboard~~ — **built** at `/my` (ID + date-of-joining verification): history, score trends, competency breakdown, strongest skills, growth areas.
+6. ~~PDF reports~~ — **built** (pdfkit): per-employee assessment report + executive summary, branded, multi-page, buffered in memory.
+7. ~~Employee master-data module~~ — **built**: directory (name/email/department/designation/manager/location/DOJ/status), add/edit/deactivate/remove, Excel/CSV bulk onboarding with flexible headers. When populated, only registered active employees can take assessments and identity fields are prefilled from the directory; empty directory = open mode.
+8. ~~Framework snapshot per cycle~~ — **built**: every cycle scores against the framework frozen at its creation (legacy cycles get a lazy snapshot). Verified live: a framework edit left the active cycle's 227 questions and all historical scores untouched.
 
 **P2 — enterprise wish-list**
-9. Per-question types (MCQ/subjective), per-question weightage/difficulty/optional flags, evidence **file** upload (text evidence exists). Note: the 2026 master assessment needs none of these — adding them must not alter the master template (per business rule).
-10. Individual named HR/Director accounts (JWT/SSO) instead of shared role keys — needed for per-person audit attribution.
-11. WhatsApp notifications; approval workflow step beyond finalize.
+9. ~~Question types~~ — **built** for future templates: MCQ (with optional correct-answer auto-scoring), subjective text, optional/mandatory flags, per-question weight and difficulty — designer settings, wizard rendering, type-aware scoring. Defaults keep the 2026 master template byte-identical. Still pending: evidence **file** upload (text evidence exists).
+10. Individual named HR/Director accounts (JWT/SSO) instead of shared role keys — needed for per-person audit attribution. **Deliberately deferred.**
+11. WhatsApp transport wiring (stub ready); approval workflow step beyond finalize.
 
 ## 4. Security gaps
 - **Shared role keys** → audit attribution is by role+IP, not by person (P2 #10).
@@ -90,7 +90,7 @@ No privilege-escalation path found; old keys verified dead after rotation.
 
 | Lens | Score | Verdict |
 |---|---|---|
-| **For its deployed purpose** — the 2026 METNMAT skill self-assessment + HR validation per the workbook | **88 / 100** | **Production-ready** once P0 items 2–3 are done (backup routine + secret rotation). |
-| Against the full enterprise-HRMS specification above | **≈60 / 100** | Core assessment engine, lifecycle, security, and analytics are enterprise-grade; notifications, employee self-service, employee master data, PDF reports, named accounts, and rich question types are the missing 40%. |
+| **For its deployed purpose** — the 2026 METNMAT skill self-assessment + HR validation per the workbook | **93 / 100** | **Production-ready** once P0 items 2–3 are done (backup routine + secret rotation). |
+| Against the full enterprise-HRMS specification above | **≈85 / 100** | All P1 gaps closed same-day (snapshots, notifications, employee self-service, employee master data, PDF reports, question types). Remaining: named JWT accounts, evidence file upload, WhatsApp transport wiring. |
 
-**Recommended order of work after go-live:** framework-per-cycle snapshot → email notifications (Resend) → employee history dashboard → PDF reports → employee master data → named accounts.
+**Remaining roadmap:** named individual accounts (per-person audit attribution) → evidence file upload → WhatsApp transport. To activate email notifications on the host, set `RESEND_API_KEY` and `HR_NOTIFY_EMAIL` environment variables.
