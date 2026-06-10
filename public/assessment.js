@@ -11,7 +11,8 @@
 const app = document.getElementById('app');
 const TOKEN_KEY = 'metnmat-session-token';
 let DATA = null;            // framework
-let CYCLE = null;           // { id, name, opensAt, closesAt, isLive, mode }
+let CYCLE = null;           // { id, name, opensAt, closesAt, durationMinutes, isLive, mode }
+let DEADLINE = null;        // effective hard-stop ISO string for this employee (or null)
 let TOKEN = localStorage.getItem(TOKEN_KEY) || '';
 let state = { step: -1, profile: {}, ratings: {} };
 let pendingSave = {};       // ratings changed since last save
@@ -74,33 +75,43 @@ window.addEventListener('pagehide', () => {
     new Blob([JSON.stringify({ ratings: pendingSave, step: Math.max(0, state.step) })], { type: 'application/json' }));
 });
 
-/* ---------------- deadline countdown ---------------- */
-function timeLeftText(closesAt) {
-  const ms = Date.parse(closesAt) - Date.now();
+/* ---------------- deadline countdown (window + HR-set per-attempt timer) ---------------- */
+// DEADLINE is the server-computed effective hard stop for this employee:
+// the soonest of the cycle close time and (start + HR time limit). Null = no limit.
+function timeLeftText(deadline) {
+  const ms = Date.parse(deadline) - Date.now();
   if (ms <= 0) return null;
-  const d = Math.floor(ms / 86400000), h = Math.floor(ms / 3600000) % 24, m = Math.floor(ms / 60000) % 60;
-  return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+  const d = Math.floor(ms / 86400000), h = Math.floor(ms / 3600000) % 24, m = Math.floor(ms / 60000) % 60, s = Math.floor(ms / 1000) % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (ms >= 3600e3) return `${h}h ${String(m).padStart(2, '0')}m`;
+  return `${m}:${String(s).padStart(2, '0')}`; // under an hour → live mm:ss
 }
 
 function updateCountdown() {
   const el = document.getElementById('deadlineChip');
   if (!el || !CYCLE) return;
   if (CYCLE.mode === 'exception') { el.innerHTML = '<span class="badge band">Exception access granted by HR</span>'; return; }
-  if (!CYCLE.closesAt) { el.textContent = ''; return; }
-  const left = timeLeftText(CYCLE.closesAt);
-  if (!left) {
+  if (!DEADLINE) { el.textContent = ''; return; }
+  const ms = Date.parse(DEADLINE) - Date.now();
+  if (ms <= 0) {
     flushSave();
-    lockWizard('The assessment window has closed. Your progress is saved — contact HR if you need an exception.');
+    const timed = CYCLE.durationMinutes && (!CYCLE.closesAt || Date.parse(CYCLE.closesAt) > Date.parse(DEADLINE) + 1000);
+    lockWizard(timed
+      ? 'Your time limit for this assessment has elapsed. Your progress is saved — contact HR if you need more time.'
+      : 'The assessment window has closed. Your progress is saved — contact HR if you need an exception.');
     return;
   }
-  const urgent = Date.parse(CYCLE.closesAt) - Date.now() < 3600e3;
-  el.innerHTML = `<span class="badge ${urgent ? 'fail' : 'pending'}">⏱ Closes in ${left}</span>`;
+  const urgent = ms < 5 * 60e3;
+  const label = (CYCLE.durationMinutes && ms < 3600e3) ? 'Time left' : 'Closes in';
+  el.innerHTML = `<span class="badge ${urgent ? 'fail' : 'pending'}">⏱ ${label} ${timeLeftText(DEADLINE)}</span>`;
 }
 
 function startCountdown() {
   clearInterval(countdownTimer);
   updateCountdown();
-  countdownTimer = setInterval(updateCountdown, 30000);
+  // tick every second when under an hour (live mm:ss), else every 30s
+  const ms = DEADLINE ? Date.parse(DEADLINE) - Date.now() : Infinity;
+  countdownTimer = setInterval(updateCountdown, ms < 3600e3 ? 1000 : 30000);
 }
 
 function lockWizard(message) {
@@ -219,10 +230,11 @@ function renderProfile() {
         if (!res.ok) throw new Error(j.error || 'Could not start the assessment.');
         TOKEN = j.token;
         localStorage.setItem(TOKEN_KEY, TOKEN);
-        CYCLE = j.cycle;
+        CYCLE = j.cycle; DEADLINE = j.deadlineAt || null;
         state.ratings = j.draft.ratings || {};
         state.step = j.resumed ? (j.draft.step ?? 0) : 0;
         if (j.resumed) toast('Welcome back — your earlier progress was restored.');
+        else if (CYCLE.durationMinutes) toast(`You have ${CYCLE.durationMinutes} minutes to complete this assessment once you begin.`);
         if (CYCLE.mode === 'exception') toast('Exception access granted by HR — you can complete your assessment now.');
       } else {
         state.step = 0;
@@ -431,11 +443,13 @@ function render() {
       const res = await fetch('/api/session/' + TOKEN);
       if (res.ok) {
         const j = await res.json();
-        CYCLE = j.cycle;
+        CYCLE = j.cycle; DEADLINE = j.deadlineAt || null;
         state.profile = j.draft.profile || {};
         state.ratings = j.draft.ratings || {};
         state.step = Math.min(j.draft.step ?? 0, DATA.domains.length);
-        if (!j.accessible) return lockWizard('The assessment window has closed. Your progress is saved — contact HR if you need an exception.');
+        if (!j.accessible) return lockWizard(j.expired
+          ? 'Your time limit for this assessment has elapsed. Your progress is saved — contact HR if you need more time.'
+          : 'The assessment window has closed. Your progress is saved — contact HR if you need an exception.');
         render();
         if (totalRated() > 0) toast('Welcome back — continuing from where you left off.');
         return;

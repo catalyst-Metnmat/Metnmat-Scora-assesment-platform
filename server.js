@@ -75,7 +75,22 @@ function findAccessCycle(cycles, employeeId) {
 }
 function publicCycleInfo(cycle) {
   if (!cycle) return null;
-  return { id: cycle.id, name: cycle.name, opensAt: cycle.opensAt || null, closesAt: cycle.closesAt || null, isLive: cycleIsLive(cycle) };
+  return { id: cycle.id, name: cycle.name, opensAt: cycle.opensAt || null, closesAt: cycle.closesAt || null, durationMinutes: cycle.durationMinutes || 0, isLive: cycleIsLive(cycle) };
+}
+
+// per-attempt timer: HR can set cycle.durationMinutes. The effective hard stop
+// for an employee is the soonest of (window close, startedAt + duration).
+// An HR exception lifts both — they finish freely.
+function attemptDeadline(cycle, startedAt, mode) {
+  if (!cycle || mode === 'exception') return null;
+  const ends = [];
+  if (cycle.closesAt) ends.push(Date.parse(cycle.closesAt));
+  if (cycle.durationMinutes && startedAt) ends.push(Date.parse(startedAt) + cycle.durationMinutes * 60000);
+  return ends.length ? new Date(Math.min(...ends)).toISOString() : null;
+}
+function attemptExpired(cycle, draft, mode, now = Date.now()) {
+  if (mode === 'exception' || !cycle || !cycle.durationMinutes || !draft || !draft.startedAt) return false;
+  return now > Date.parse(draft.startedAt) + cycle.durationMinutes * 60000;
 }
 
 // ---- framework snapshots: each cycle scores against the framework frozen at
@@ -423,7 +438,8 @@ app.post('/api/session/start', submitLimit, wrap(async (req, res) => {
   res.json({
     ok: true, token: draft.token, mode,
     cycle: { ...publicCycleInfo(cycle), mode },
-    draft: { profile: draft.profile, ratings: draft.ratings, step: draft.step },
+    draft: { profile: draft.profile, ratings: draft.ratings, step: draft.step, startedAt: draft.startedAt },
+    deadlineAt: attemptDeadline(cycle, draft.startedAt, mode),
     resumed: Object.keys(draft.ratings).length > 0
   });
 }));
@@ -435,11 +451,14 @@ app.get('/api/session/:token', wrap(async (req, res) => {
   const cycles = await store.listCycles();
   const cycle = cycles.find(c => c.id === draft.cycleId);
   const access = cycle ? cycleAccess(cycle, draft.employeeId) : { allowed: false };
+  const expired = cycle ? attemptExpired(cycle, draft, access.mode) : false;
   res.json({
     ok: true,
     cycle: cycle ? { ...publicCycleInfo(cycle), mode: access.mode || null } : null,
-    accessible: access.allowed,
-    draft: { profile: draft.profile, ratings: draft.ratings, step: draft.step }
+    accessible: access.allowed && !expired,
+    expired,
+    deadlineAt: cycle ? attemptDeadline(cycle, draft.startedAt, access.mode) : null,
+    draft: { profile: draft.profile, ratings: draft.ratings, step: draft.step, startedAt: draft.startedAt }
   });
 }));
 
@@ -451,6 +470,7 @@ async function saveSession(req, res) {
   const cycle = cycles.find(c => c.id === draft.cycleId);
   const access = cycle ? cycleAccess(cycle, draft.employeeId) : { allowed: false };
   if (!access.allowed) return res.status(423).json({ error: 'The assessment window has closed. Your progress is saved — contact HR for an exception.' });
+  if (attemptExpired(cycle, draft, access.mode)) return res.status(423).json({ error: 'Your time limit for this assessment has elapsed. Your progress is saved — contact HR if you need more time.' });
 
   let body = req.body;
   if (Buffer.isBuffer(body)) { try { body = JSON.parse(body.toString('utf8')); } catch { body = {}; } }
@@ -502,6 +522,7 @@ app.post('/api/submissions', submitLimit, wrap(async (req, res) => {
   const cycle = cycles.find(c => c.id === draft.cycleId);
   const access = cycle ? cycleAccess(cycle, draft.employeeId) : { allowed: false };
   if (!access.allowed) return res.status(423).json({ error: 'The assessment window has closed. Your progress is saved — contact HR for an exception.' });
+  if (attemptExpired(cycle, draft, access.mode)) return res.status(423).json({ error: 'Your time limit for this assessment has elapsed. Your progress is saved — contact HR if you need more time.' });
   const fw = await makeFwResolver()(cycle.id);
 
   const missing = missingRequired(fw, draft.ratings);
@@ -605,9 +626,10 @@ hr.get('/whoami', (req, res) => res.json({
 hr.get('/cycles', wrap(async (_req, res) => res.json(await store.listCycles())));
 
 const parseWhen = v => { if (!v) return null; const t = Date.parse(v); return isNaN(t) ? undefined : new Date(t).toISOString(); };
+const parseDuration = v => { const n = Number(v); return isNaN(n) || n <= 0 ? 0 : Math.min(100000, Math.round(n)); };
 
 hr.post('/cycles', wrap(async (req, res) => {
-  const { name: rawName, opensAt, closesAt } = req.body || {};
+  const { name: rawName, opensAt, closesAt, durationMinutes } = req.body || {};
   const name = String(rawName || '').trim().slice(0, 80);
   if (!name) return res.status(400).json({ error: 'Cycle name is required (e.g. "FY 2026-27")' });
   const o = parseWhen(opensAt), c = parseWhen(closesAt);
@@ -616,7 +638,7 @@ hr.post('/cycles', wrap(async (req, res) => {
   const cycles = await store.listCycles();
   if (cycles.some(x => x.name.toLowerCase() === name.toLowerCase())) return res.status(409).json({ error: 'A cycle with this name already exists.' });
   await store.updateCycles(cs => { for (const x of cs) if (x.status === 'open') { x.status = 'closed'; x.closedAt = new Date().toISOString(); } });
-  const cyc = { id: newId(), name, status: 'open', opensAt: o, closesAt: c, exceptions: [], createdAt: new Date().toISOString(), closedAt: null };
+  const cyc = { id: newId(), name, status: 'open', opensAt: o, closesAt: c, durationMinutes: parseDuration(durationMinutes), exceptions: [], createdAt: new Date().toISOString(), closedAt: null };
   await store.insertCycle(cyc);
   // freeze the framework for this cycle so later designer edits never affect its scoring
   await store.saveFrameworkSnapshot(cyc.id, await store.getFramework());
@@ -643,6 +665,7 @@ hr.put('/cycles/:id', wrap(async (req, res) => {
       if (o === undefined || c2 === undefined) { err = 'Invalid date/time format.'; return; }
       if (o && c2 && Date.parse(c2) <= Date.parse(o)) { err = 'The close time must be after the open time.'; return; }
       cyc.opensAt = o; cyc.closesAt = c2;
+      if (req.body.durationMinutes !== undefined) cyc.durationMinutes = parseDuration(req.body.durationMinutes);
     }
     else if (action === 'assign') {
       // target the assessment at specific departments and/or employee IDs (empty = everyone)
@@ -650,8 +673,8 @@ hr.put('/cycles/:id', wrap(async (req, res) => {
         departments: (Array.isArray(departments) ? departments : []).map(s => String(s).trim()).filter(Boolean).slice(0, 50),
         employees: (Array.isArray(employees) ? employees : []).map(s => String(s).trim()).filter(Boolean).slice(0, 1000)
       };
-      if (assign.departments.length || assign.employees.length) cyc.assign = assign;
-      else delete cyc.assign;
+      // set null (not delete) so the change persists under Mongo $set
+      cyc.assign = (assign.departments.length || assign.employees.length) ? assign : null;
     }
   });
   if (!found) return res.status(404).json({ error: 'Cycle not found' });

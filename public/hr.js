@@ -531,9 +531,10 @@ function cycleStatusBadge(c) {
 
 function renderCyclesPanel() {
   const rows = [...CYCLES].reverse().map(c => {
-    const win = (c.opensAt || c.closesAt)
+    let win = (c.opensAt || c.closesAt)
       ? `${c.opensAt ? fmtWhen(c.opensAt) : 'immediately'} &rarr; ${c.closesAt ? fmtWhen(c.closesAt) : 'no deadline'}`
       : 'No time limit';
+    if (c.durationMinutes) win += ` · ⏱ ${c.durationMinutes} min/attempt`;
     const exCount = (c.exceptions || []).length;
     const assigned = c.assign && ((c.assign.departments || []).length || (c.assign.employees || []).length);
     return `
@@ -554,14 +555,15 @@ function renderCyclesPanel() {
   document.getElementById('panel').innerHTML = `
     <div class="card mt">
       <h2>Assessment cycles &amp; windows</h2>
-      <p class="muted" style="margin-bottom:12px">Employees can only work while a cycle is <b>Live</b>. Set an optional open/close time to run the assessment for a fixed window (e.g. 48 hours or a specific day) — it locks automatically at the deadline. Use <b>Exceptions</b> to reopen a closed assessment for specific employees.</p>
+      <p class="muted" style="margin-bottom:12px">Employees can only work while a cycle is <b>Live</b>. The open/close <b>window</b> sets the overall availability; the <b>time limit</b> is a per-employee countdown that starts when they begin and auto-locks when it runs out. Both are optional. Use <b>Exceptions</b> to reopen for specific employees.</p>
       <div class="actions" style="margin-bottom:6px">
-        <input type="text" id="cycName" placeholder='New cycle name, e.g. "FY 2027-28"' maxlength="80" style="max-width:240px">
-        <label class="muted" style="margin:0">Opens</label><input type="datetime-local" id="cycOpens" style="max-width:200px">
-        <label class="muted" style="margin:0">Closes</label><input type="datetime-local" id="cycCloses" style="max-width:200px">
+        <input type="text" id="cycName" placeholder='New cycle name, e.g. "FY 2027-28"' maxlength="80" style="max-width:220px">
+        <label class="muted" style="margin:0">Opens</label><input type="datetime-local" id="cycOpens" style="max-width:190px">
+        <label class="muted" style="margin:0">Closes</label><input type="datetime-local" id="cycCloses" style="max-width:190px">
+        <label class="muted" style="margin:0">Time limit</label><input type="number" id="cycDur" placeholder="min" min="0" max="100000" style="max-width:90px" title="Minutes each employee gets to complete the assessment (blank = no limit)">
         <button class="btn small" id="cycCreate">Open new cycle</button>
       </div>
-      <p class="muted" style="margin-bottom:14px">Leave the times empty for an always-open cycle. Quick deadline: <a href="#" id="q48">48 hours</a> · <a href="#" id="q7d">1 week</a> · <a href="#" id="qToday">today until midnight</a></p>
+      <p class="muted" style="margin-bottom:14px">Leave times empty for an always-open cycle; leave the time limit blank for no per-attempt countdown. Quick deadline: <a href="#" id="q48">48 hours</a> · <a href="#" id="q7d">1 week</a> · <a href="#" id="qToday">today until midnight</a></p>
       <table class="list"><thead><tr><th>Cycle &amp; window</th><th>Status</th><th>Assigned to</th><th></th></tr></thead><tbody>${rows}</tbody></table>
       <div class="error-msg" id="cycErr" hidden></div>
     </div>`;
@@ -587,7 +589,8 @@ function renderCyclesPanel() {
       await api('/api/hr/cycles', { method: 'POST', body: JSON.stringify({
         name: document.getElementById('cycName').value,
         opensAt: fromLocalInput(document.getElementById('cycOpens').value),
-        closesAt: fromLocalInput(document.getElementById('cycCloses').value)
+        closesAt: fromLocalInput(document.getElementById('cycCloses').value),
+        durationMinutes: Number(document.getElementById('cycDur').value) || 0
       }) });
       toast('Cycle opened.');
       refresh();
@@ -610,21 +613,22 @@ function renderCyclesPanel() {
     sub.hidden = !sub.hidden;
     if (sub.hidden) return;
     sub.firstElementChild.innerHTML = `
-      <div class="actions" style="padding:12px">
-        <label class="muted" style="margin:0">Opens</label><input type="datetime-local" id="wOpens" value="${toLocalInput(c.opensAt)}" style="max-width:200px">
-        <label class="muted" style="margin:0">Closes</label><input type="datetime-local" id="wCloses" value="${toLocalInput(c.closesAt)}" style="max-width:200px">
-        <button class="btn small" id="wSave">Save window</button>
-        <button class="btn ghost small" id="wClear">Remove time limit</button>
+      <div class="actions" style="padding:12px;flex-wrap:wrap">
+        <label class="muted" style="margin:0">Opens</label><input type="datetime-local" id="wOpens" value="${toLocalInput(c.opensAt)}" style="max-width:190px">
+        <label class="muted" style="margin:0">Closes</label><input type="datetime-local" id="wCloses" value="${toLocalInput(c.closesAt)}" style="max-width:190px">
+        <label class="muted" style="margin:0">Time limit (min)</label><input type="number" id="wDur" value="${c.durationMinutes || ''}" placeholder="none" min="0" max="100000" style="max-width:100px" title="Per-employee countdown once they begin">
+        <button class="btn small" id="wSave">Save</button>
+        <button class="btn ghost small" id="wClear">Clear window &amp; limit</button>
       </div>`;
     sub.querySelector('#wSave').onclick = async () => {
       try {
-        await api(`/api/hr/cycles/${c.id}`, { method: 'PUT', body: JSON.stringify({ action: 'schedule', opensAt: fromLocalInput(sub.querySelector('#wOpens').value), closesAt: fromLocalInput(sub.querySelector('#wCloses').value) }) });
+        await api(`/api/hr/cycles/${c.id}`, { method: 'PUT', body: JSON.stringify({ action: 'schedule', opensAt: fromLocalInput(sub.querySelector('#wOpens').value), closesAt: fromLocalInput(sub.querySelector('#wCloses').value), durationMinutes: Number(sub.querySelector('#wDur').value) || 0 }) });
         toast('Window updated.'); refresh();
       } catch (e) { if (e.message !== 'forbidden') showErr(e.message); }
     };
     sub.querySelector('#wClear').onclick = async () => {
-      await api(`/api/hr/cycles/${c.id}`, { method: 'PUT', body: JSON.stringify({ action: 'schedule', opensAt: null, closesAt: null }) });
-      toast('Time limit removed.'); refresh();
+      await api(`/api/hr/cycles/${c.id}`, { method: 'PUT', body: JSON.stringify({ action: 'schedule', opensAt: null, closesAt: null, durationMinutes: 0 }) });
+      toast('Window and time limit removed.'); refresh();
     };
   });
 
