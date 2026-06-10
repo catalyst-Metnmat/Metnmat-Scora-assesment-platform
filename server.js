@@ -312,6 +312,16 @@ app.post('/api/session/start', submitLimit, wrap(async (req, res) => {
   const access = findAccessCycle(cycles, eid);
   if (!access) return res.status(423).json({ error: 'The assessment window is closed. Contact HR if you need an exception to be granted.' });
   const { cycle, mode } = access;
+
+  // assignment targeting: when the cycle is assigned to specific departments or
+  // employees, only they can take it (an HR exception always overrides)
+  if (mode !== 'exception' && cycle.assign && ((cycle.assign.departments || []).length || (cycle.assign.employees || []).length)) {
+    const inEmployees = (cycle.assign.employees || []).some(e => normalizeEmpId(e) === eid);
+    const dept = String((dirRec && dirRec.department) || profile.department || '').trim().toLowerCase();
+    const inDepartments = (cycle.assign.departments || []).some(d => String(d).trim().toLowerCase() === dept);
+    if (!inEmployees && !inDepartments)
+      return res.status(403).json({ error: `This assessment (${cycle.name}) is assigned to specific departments/employees and your ID is not on the list. Contact HR if you believe this is a mistake.` });
+  }
   const fw = await makeFwResolver()(cycle.id);
   for (const f of fw.profileFields.filter(f => f.required)) {
     if ((dirRec && dirRec[f.id]) || (profile[f.id] && String(profile[f.id]).trim())) continue;
@@ -542,7 +552,7 @@ hr.post('/cycles', wrap(async (req, res) => {
 }));
 
 hr.put('/cycles/:id', wrap(async (req, res) => {
-  const { action, opensAt, closesAt } = req.body || {};
+  const { action, opensAt, closesAt, departments, employees } = req.body || {};
   let found = null, err = null;
   await store.updateCycles(cs => {
     const cyc = cs.find(c => c.id === req.params.id);
@@ -556,12 +566,59 @@ hr.put('/cycles/:id', wrap(async (req, res) => {
       if (o && c2 && Date.parse(c2) <= Date.parse(o)) { err = 'The close time must be after the open time.'; return; }
       cyc.opensAt = o; cyc.closesAt = c2;
     }
+    else if (action === 'assign') {
+      // target the assessment at specific departments and/or employee IDs (empty = everyone)
+      const assign = {
+        departments: (Array.isArray(departments) ? departments : []).map(s => String(s).trim()).filter(Boolean).slice(0, 50),
+        employees: (Array.isArray(employees) ? employees : []).map(s => String(s).trim()).filter(Boolean).slice(0, 1000)
+      };
+      if (assign.departments.length || assign.employees.length) cyc.assign = assign;
+      else delete cyc.assign;
+    }
   });
   if (!found) return res.status(404).json({ error: 'Cycle not found' });
   if (err) return res.status(400).json({ error: err });
-  if (!['close', 'reopen', 'schedule'].includes(action)) return res.status(400).json({ error: 'action must be "close", "reopen" or "schedule"' });
-  audit('cycle.' + action, req, { cycle: found.name });
+  if (!['close', 'reopen', 'schedule', 'assign'].includes(action)) return res.status(400).json({ error: 'action must be "close", "reopen", "schedule" or "assign"' });
+  audit('cycle.' + action, req, { cycle: found.name, ...(action === 'assign' ? { departments: (found.assign || {}).departments || [], employees: ((found.assign || {}).employees || []).length } : {}) });
   res.json(found);
+}));
+
+// Director-only: complete system overview (everything, everywhere)
+hr.get('/overview', wrap(async (req, res) => {
+  if (!req.isAdmin) return res.status(403).json({ error: 'Director access only' });
+  const [cycles, subs, employees, drafts, cfg, auditLog] = await Promise.all([
+    store.listCycles(), store.listSubmissions(), store.listEmployees(), store.listDrafts(), store.getConfig(), store.listAudit(20)
+  ]);
+  const fwFor = makeFwResolver();
+  const scoresByCycle = {};
+  for (const s of subs) {
+    const sc = computeScores(s, await fwFor(s.cycleId), cfg);
+    (scoresByCycle[s.cycleId] = scoresByCycle[s.cycleId] || []).push({ status: s.status, v: sc.weightedValidated });
+  }
+  const avg = a => a.length ? +(a.reduce((x, v) => x + v, 0) / a.length).toFixed(2) : null;
+  const cycleRows = [...cycles].reverse().map(c => {
+    const list = scoresByCycle[c.id] || [];
+    return {
+      id: c.id, name: c.name, status: c.status, isLive: cycleIsLive(c),
+      opensAt: c.opensAt || null, closesAt: c.closesAt || null,
+      assigned: c.assign ? ((c.assign.departments || []).length + ' dept / ' + (c.assign.employees || []).length + ' emp') : 'everyone',
+      exceptions: (c.exceptions || []).length,
+      submissions: list.length,
+      validated: list.filter(x => x.status === 'validated').length,
+      avgValidated: avg(list.map(x => x.v).filter(v => v != null)),
+      inProgress: drafts.filter(d => d.cycleId === c.id).length
+    };
+  });
+  res.json({
+    totals: {
+      cycles: cycles.length, submissions: subs.length,
+      validated: subs.filter(s => s.status === 'validated').length,
+      employees: employees.length, inProgress: drafts.length,
+      activeCycle: (cycles.find(c => cycleIsLive(c)) || {}).name || null
+    },
+    cycles: cycleRows,
+    recentActivity: auditLog
+  });
 }));
 
 // ---- per-employee exceptions: reopen a closed assessment for specific employees ----
@@ -901,13 +958,6 @@ hr.get('/submissions/:id/report.pdf', wrap(async (req, res) => {
 }));
 
 hr.get('/audit', wrap(async (_req, res) => res.json(await store.listAudit(100))));
-
-// ---------------------------------------------------------------- notifications (in-app feed)
-hr.get('/notifications', wrap(async (_req, res) => {
-  const list = await store.listNotifications(50);
-  res.json({ notifications: list, unread: list.filter(n => !n.read).length });
-}));
-hr.post('/notifications/read', wrap(async (_req, res) => { await store.markNotificationsRead(); res.json({ ok: true }); }));
 
 // ---------------------------------------------------------------- employee directory
 hr.get('/employees', wrap(async (_req, res) => {
@@ -1294,37 +1344,6 @@ app.get('/hr', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'hr.ht
 app.get('/admin', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 app.get('/my', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'my.html')));
 
-// ---------------------------------------------------------------- deadline reminders
-// Checked at boot and every 6h: when the open cycle closes within 24h, remind
-// in-progress employees (email when the directory has their address) + HR.
-const remindedCycles = new Set();
-async function deadlineReminders() {
-  try {
-    const cycles = await store.listCycles();
-    const open = cycles.find(c => cycleIsLive(c));
-    if (!open || !open.closesAt || remindedCycles.has(open.id)) return;
-    const msLeft = Date.parse(open.closesAt) - Date.now();
-    if (msLeft <= 0 || msLeft > 24 * 3600e3) return;
-    remindedCycles.add(open.id);
-    const drafts = await store.listDrafts(open.id);
-    const hours = Math.round(msLeft / 3600e3);
-    notify('assessment.reminder', {
-      title: `Deadline in ~${hours}h: ${open.name}`,
-      body: `The assessment window closes in about ${hours} hours. ${drafts.length} employee(s) still have in-progress drafts.`,
-      emailTo: process.env.HR_NOTIFY_EMAIL
-    });
-    for (const d of drafts) {
-      const rec = await store.getEmployee(d.employeeId);
-      if (rec && rec.email) {
-        notify('assessment.reminder', {
-          title: `Reminder: complete your METNMAT assessment (~${hours}h left)`,
-          body: `Hi ${d.profile.name}, the ${open.name} assessment window closes in about ${hours} hours. Your progress is saved — return to the portal to finish and submit.`,
-          emailTo: rec.email
-        });
-      }
-    }
-  } catch (e) { console.error('Reminder check failed:', e.message); }
-}
 app.get('/healthz', (_req, res) => res.json({ ok: true, driver: store.driver }));
 
 app.use((req, res) => {
@@ -1386,8 +1405,6 @@ function start() {
     console.log(line);
   });
   if (store.driver === 'file') { backupDb(); setInterval(backupDb, 6 * 3600e3).unref(); }
-  ready.then(() => deadlineReminders());
-  setInterval(deadlineReminders, 6 * 3600e3).unref();
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { console.log(`\n${sig} — shutting down.`); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 3000).unref(); });
 }
 

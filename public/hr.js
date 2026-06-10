@@ -3,6 +3,7 @@
 const app = document.getElementById('app');
 const KEY_STORE = 'metnmat-hr-key';
 let hrKey = sessionStorage.getItem(KEY_STORE) || localStorage.getItem(KEY_STORE) || '';
+let ROLE = 'hr';            // 'admin' = Director (sees the extra overview)
 let SKILLS = null;          // framework cache
 let CYCLES = [];
 let currentCycleFilter = ''; // '' = all
@@ -48,6 +49,28 @@ async function loadFramework() {
   return SKILLS;
 }
 
+/* ================= main navigation ================= */
+function navBar(active) {
+  const items = [];
+  if (ROLE === 'admin') items.push(['director', 'Director overview']);
+  items.push(['subs', 'Submissions'], ['dash', 'Analytics'], ['emp', 'Employees'], ['cycles', 'Cycles & windows'], ['settings', 'Settings']);
+  return `<nav class="subnav" aria-label="Dashboard sections">
+    ${items.map(([k, l]) => `<button class="${active === k ? 'on' : ''}" data-nav="${k}">${l}</button>`).join('')}
+    <a class="subnav-link" href="/admin">Assessment designer ↗</a>
+  </nav>`;
+}
+function bindNav() {
+  app.querySelectorAll('[data-nav]').forEach(b => b.onclick = () => showView(b.dataset.nav));
+}
+function showView(v) {
+  if (v === 'subs') renderList();
+  else if (v === 'dash') renderDashboard();
+  else if (v === 'emp') renderEmployeesView();
+  else if (v === 'cycles') renderCyclesView();
+  else if (v === 'settings') renderSettings();
+  else if (v === 'director') renderDirector();
+}
+
 /* ================= key gate ================= */
 function renderLogin(msg) {
   app.innerHTML = `
@@ -64,9 +87,10 @@ function renderLogin(msg) {
     hrKey = document.getElementById('keyIn').value.trim();
     if (!hrKey) return;
     try {
-      await api('/api/hr/cycles');
+      const who = await api('/api/hr/whoami');
+      ROLE = who.role;
       (document.getElementById('rememberKey').checked ? localStorage : sessionStorage).setItem(KEY_STORE, hrKey);
-      renderList();
+      showView(ROLE === 'admin' ? 'director' : 'subs');
     } catch (e) {
       if (e.message !== 'forbidden') renderLogin(e.message);
     }
@@ -113,9 +137,10 @@ async function renderList() {
       </tr>`).join('');
 
   app.innerHTML = `
+    ${navBar('subs')}
     <div class="list-head">
       <div>
-        <h1>Assessment Submissions</h1>
+        <h1>Submissions</h1>
         <p class="sub" style="margin-bottom:0">${open
           ? (openIsLive
             ? `Active cycle: <b>${esc(open.name)}</b> — live${open.closesAt ? ', closes ' + fmtWhen(open.closesAt) : ''}.`
@@ -123,13 +148,8 @@ async function renderList() {
           : '<b>No open cycle</b> — the employee portal is closed.'}</p>
       </div>
       <div class="actions">
-        <button class="btn small" id="cycleBtn">Manage cycles</button>
-        <a class="btn secondary small" href="/admin">Assessment designer</a>
-        <button class="btn ghost small" id="employeesBtn">Employees</button>
-        <button class="btn ghost small" id="weightsBtn">Domain weights</button>
-        <button class="btn ghost small" id="auditBtn">Audit log</button>
-        <button class="btn ghost small" id="notifBtn">🔔 <span id="notifCount"></span></button>
-        <button class="btn ghost small" id="lockBtn" title="Forget the key on this device">Lock</button>
+        <button class="btn ghost small" id="exportXlsx">Export Excel</button>
+        <button class="btn ghost small" id="exportAll">Export CSV</button>
       </div>
     </div>
 
@@ -159,14 +179,9 @@ async function renderList() {
         <thead><tr><th>Employee</th><th>Department</th><th>Cycle</th><th>Submitted</th><th>Self (wtd)</th><th>Validated (wtd)</th><th>Status</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
-      <div class="actions mt">
-        <button class="btn small" id="analyticsBtn">Open analytics dashboard</button>
-        <button class="btn ghost small" id="exportXlsx">Export Excel (all data)</button>
-        <button class="btn ghost small" id="exportAll">Export ${currentCycleFilter ? 'cycle' : 'all'} to CSV</button>
-      </div>
-    </div>
-    <div id="panel"></div>`;
+    </div>`;
 
+  bindNav();
   app.querySelectorAll('.tab').forEach(t => t.onclick = () => { currentCycleFilter = t.dataset.cyc; renderList(); });
   app.querySelectorAll('tr.clickable').forEach(tr => tr.onclick = () => renderDetail(tr.dataset.id));
   app.querySelectorAll('[data-discard]').forEach(b => b.onclick = async e => {
@@ -176,22 +191,119 @@ async function renderList() {
     toast('Draft discarded.');
     renderList();
   });
-  document.getElementById('lockBtn').onclick = () => { sessionStorage.removeItem(KEY_STORE); localStorage.removeItem(KEY_STORE); hrKey = ''; renderLogin(); };
-  document.getElementById('cycleBtn').onclick = renderCyclesPanel;
-  document.getElementById('weightsBtn').onclick = renderWeightsPanel;
-  document.getElementById('auditBtn').onclick = renderAuditPanel;
-  document.getElementById('analyticsBtn').onclick = renderDashboard;
-  document.getElementById('employeesBtn').onclick = renderEmployeesPanel;
-  document.getElementById('notifBtn').onclick = renderNotifPanel;
-  api('/api/hr/notifications').then(n => {
-    const el = document.getElementById('notifCount');
-    if (el && n.unread) el.textContent = n.unread;
-  }).catch(() => {});
   document.getElementById('exportAll').onclick = () =>
     downloadCsv('/api/hr/export.csv' + (currentCycleFilter ? `?cycleId=${currentCycleFilter}` : ''),
       `METNMAT_assessments_${currentCycleFilter ? cycName(currentCycleFilter).replace(/[^\w]+/g, '_') : 'all'}.csv`);
   document.getElementById('exportXlsx').onclick = () =>
     downloadCsv('/api/hr/export.xlsx' + (currentCycleFilter ? `?cycleId=${currentCycleFilter}` : ''), 'METNMAT_assessment_data.xlsx');
+}
+
+/* ================= full-page view wrappers ================= */
+function renderEmployeesView() {
+  app.innerHTML = `${navBar('emp')}
+    <div class="list-head">
+      <div><h1>Employee Directory</h1>
+      <p class="sub" style="margin-bottom:0">Onboard staff, manage departments/designations and control who can take assessments.</p></div>
+    </div>
+    <div id="panel"></div>`;
+  bindNav();
+  renderEmployeesPanel();
+}
+
+function renderCyclesView() {
+  app.innerHTML = `${navBar('cycles')}
+    <div class="list-head">
+      <div><h1>Cycles &amp; Windows</h1>
+      <p class="sub" style="margin-bottom:0">Schedule assessment windows, assign them to departments or employees, and manage exceptions.</p></div>
+    </div>
+    <div id="panel"></div>`;
+  bindNav();
+  api('/api/hr/cycles').then(cs => { CYCLES = cs; renderCyclesPanel(); });
+}
+
+async function renderSettings() {
+  app.innerHTML = `${navBar('settings')}
+    <div class="list-head">
+      <div><h1>Settings</h1>
+      <p class="sub" style="margin-bottom:0">Scoring weights, audit trail and session.</p></div>
+      <div class="actions">
+        <a class="btn secondary small" href="/admin">Assessment designer</a>
+        <button class="btn ghost small" id="lockBtn" title="Forget the key on this device">Lock dashboard</button>
+      </div>
+    </div>
+    <div id="panel"></div>
+    <div id="panel2"></div>`;
+  bindNav();
+  document.getElementById('lockBtn').onclick = () => { sessionStorage.removeItem(KEY_STORE); localStorage.removeItem(KEY_STORE); hrKey = ''; renderLogin(); };
+  await renderWeightsPanel();
+  const events = await api('/api/hr/audit').catch(() => []);
+  const rows = events.map(e => `
+    <tr><td style="white-space:nowrap">${new Date(e.ts).toLocaleString('en-IN')}</td>
+      <td><b>${esc(e.event)}</b></td>
+      <td class="muted">${esc(Object.entries(e).filter(([k]) => !['ts', 'event', 'ip'].includes(k)).map(([k, v]) => `${k}: ${v}`).join(' · '))}</td></tr>`).join('')
+    || '<tr><td colspan="3" class="empty">No events recorded yet.</td></tr>';
+  document.getElementById('panel2').innerHTML = `
+    <div class="card mt">
+      <h2>Audit log <span class="muted" style="font-weight:400;font-size:13px">(last 100 events, newest first)</span></h2>
+      <div style="overflow-x:auto"><table class="list mt"><tbody>${rows}</tbody></table></div>
+    </div>`;
+}
+
+/* ================= director overview (sees everything) ================= */
+async function renderDirector() {
+  let ov;
+  try { ov = await api('/api/hr/overview'); } catch (e) { if (e.message !== 'forbidden') toast(e.message); return; }
+  const t = ov.totals;
+  const cycleRows = ov.cycles.map(c => `
+    <tr>
+      <td><b>${esc(c.name)}</b><div class="muted">${(c.opensAt || c.closesAt) ? `${c.opensAt ? fmtWhen(c.opensAt) : 'immediately'} → ${c.closesAt ? fmtWhen(c.closesAt) : 'no deadline'}` : 'No time limit'}</div></td>
+      <td>${c.status !== 'open' ? '<span class="badge neutral">Closed</span>' : c.isLive ? '<span class="badge validated">Live</span>' : '<span class="badge fail">Window closed</span>'}</td>
+      <td>${esc(c.assigned)}</td>
+      <td style="text-align:center">${c.submissions}</td>
+      <td style="text-align:center">${c.validated}</td>
+      <td style="text-align:center">${c.inProgress}</td>
+      <td style="text-align:center">${c.avgValidated ?? '—'}</td>
+      <td style="text-align:center">${c.exceptions || '—'}</td>
+    </tr>`).join('') || '<tr><td colspan="8" class="empty">No cycles yet.</td></tr>';
+  const activity = ov.recentActivity.map(e => `
+    <div class="podium-row">
+      <span class="badge neutral" style="min-width:0">${esc(e.event)}</span>
+      <div class="muted" style="font-size:12.5px">${esc(Object.entries(e).filter(([k]) => !['ts', 'event', 'ip'].includes(k)).map(([k, v]) => `${k}: ${v}`).join(' · ')) || '—'}</div>
+      <span class="muted" style="margin-left:auto;white-space:nowrap;font-size:12px">${new Date(e.ts).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+    </div>`).join('') || '<div class="empty">No activity yet.</div>';
+
+  app.innerHTML = `${navBar('director')}
+    <div class="list-head">
+      <div><div class="kicker">Director console</div><h1>Company Overview</h1>
+      <p class="sub" style="margin-bottom:0">Everything across all cycles, employees and HR activity.</p></div>
+      <div class="actions">
+        <button class="btn ghost small" id="execPdfAll">Executive summary PDF</button>
+        <button class="btn ghost small" id="exportXlsxAll">Export Excel (all data)</button>
+      </div>
+    </div>
+    <div class="stat-grid">
+      <div class="stat"><div class="v">${t.employees}</div><div class="l">Employees onboarded</div></div>
+      <div class="stat"><div class="v">${t.submissions}</div><div class="l">Total submissions</div></div>
+      <div class="stat"><div class="v">${t.validated}</div><div class="l">Evaluated</div></div>
+      <div class="stat"><div class="v">${t.inProgress}</div><div class="l">In progress now</div></div>
+      <div class="stat"><div class="v">${t.cycles}</div><div class="l">Cycles</div></div>
+      <div class="stat"><div class="v" style="font-size:15px;padding-top:6px">${t.activeCycle ? `<span class="badge validated">${esc(t.activeCycle)}</span>` : '<span class="badge neutral">None live</span>'}</div><div class="l">Active window</div></div>
+    </div>
+    <div class="card" style="overflow-x:auto">
+      <h2>All assessment cycles</h2>
+      <table class="list mt">
+        <thead><tr><th>Cycle &amp; window</th><th>Status</th><th>Assigned to</th><th style="text-align:center">Submitted</th><th style="text-align:center">Evaluated</th><th style="text-align:center">In progress</th><th style="text-align:center">Avg score</th><th style="text-align:center">Exceptions</th></tr></thead>
+        <tbody>${cycleRows}</tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Recent HR activity <span class="muted" style="font-weight:400;font-size:13px">(from the audit trail)</span></h2>
+      ${activity}
+    </div>`;
+  bindNav();
+  document.getElementById('execPdfAll').onclick = () => downloadCsv('/api/hr/report.pdf', 'METNMAT_executive_summary.pdf');
+  document.getElementById('exportXlsxAll').onclick = () => downloadCsv('/api/hr/export.xlsx', 'METNMAT_assessment_data.xlsx');
+  window.scrollTo(0, 0);
 }
 
 /* ================= cycles panel (windows + exceptions) ================= */
@@ -217,18 +329,21 @@ function renderCyclesPanel() {
       ? `${c.opensAt ? fmtWhen(c.opensAt) : 'immediately'} &rarr; ${c.closesAt ? fmtWhen(c.closesAt) : 'no deadline'}`
       : 'No time limit';
     const exCount = (c.exceptions || []).length;
+    const assigned = c.assign && ((c.assign.departments || []).length || (c.assign.employees || []).length);
     return `
     <tr><td><b>${esc(c.name)}</b><div class="muted">${win}</div></td>
       <td>${cycleStatusBadge(c)}</td>
+      <td>${assigned ? `<span class="badge band">${(c.assign.departments || []).length ? (c.assign.departments || []).join(', ').slice(0, 40) : ''}${(c.assign.employees || []).length ? ((c.assign.departments || []).length ? ' + ' : '') + (c.assign.employees || []).length + ' employee(s)' : ''}</span>` : '<span class="muted">Everyone</span>'}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn ghost small" data-window="${c.id}">Window</button>
+        <button class="btn ghost small" data-assign="${c.id}">Assign</button>
         <button class="btn ghost small" data-except="${c.id}">Exceptions${exCount ? ' (' + exCount + ')' : ''}</button>
         ${c.status === 'open'
           ? `<button class="btn ghost small" data-close="${c.id}">Close</button>`
           : `<button class="btn ghost small" data-reopen="${c.id}">Reopen</button>`}
       </td></tr>
-    <tr hidden id="cycsub-${c.id}"><td colspan="3" style="background:var(--bg);border-radius:10px"></td></tr>`;
-  }).join('') || '<tr><td colspan="3" class="empty">No cycles yet.</td></tr>';
+    <tr hidden id="cycsub-${c.id}"><td colspan="4" style="background:var(--bg);border-radius:10px"></td></tr>`;
+  }).join('') || '<tr><td colspan="4" class="empty">No cycles yet.</td></tr>';
 
   document.getElementById('panel').innerHTML = `
     <div class="card mt">
@@ -241,12 +356,12 @@ function renderCyclesPanel() {
         <button class="btn small" id="cycCreate">Open new cycle</button>
       </div>
       <p class="muted" style="margin-bottom:14px">Leave the times empty for an always-open cycle. Quick deadline: <a href="#" id="q48">48 hours</a> · <a href="#" id="q7d">1 week</a> · <a href="#" id="qToday">today until midnight</a></p>
-      <table class="list"><thead><tr><th>Cycle &amp; window</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+      <table class="list"><thead><tr><th>Cycle &amp; window</th><th>Status</th><th>Assigned to</th><th></th></tr></thead><tbody>${rows}</tbody></table>
       <div class="error-msg" id="cycErr" hidden></div>
     </div>`;
 
   const showErr = m => { const e = document.getElementById('cycErr'); e.hidden = false; e.textContent = m; };
-  const refresh = () => renderList().then(renderCyclesPanel);
+  const refresh = () => api('/api/hr/cycles').then(cs => { CYCLES = cs; renderCyclesPanel(); });
 
   // quick deadline presets
   const setQuick = (fromNowMs, endOfDay) => e => {
@@ -307,6 +422,42 @@ function renderCyclesPanel() {
     };
   });
 
+  // assignment targeting inline ("design assignment": pick who this assessment is for)
+  document.getElementById('panel').querySelectorAll('[data-assign]').forEach(b => b.onclick = async () => {
+    const c = CYCLES.find(x => x.id === b.dataset.assign);
+    const sub = document.getElementById('cycsub-' + c.id);
+    sub.hidden = !sub.hidden;
+    if (sub.hidden) return;
+    let deptHint = '';
+    try { const dir = await api('/api/hr/employees'); if (dir.departments.length) deptHint = `Known departments: ${dir.departments.join(', ')}`; } catch {}
+    sub.firstElementChild.innerHTML = `
+      <div style="padding:14px">
+        <p class="muted" style="margin-bottom:10px">Target this assessment at specific <b>departments</b> and/or <b>employee IDs</b>. Anyone not on the list is blocked from starting it. Leave both empty to assign it to <b>everyone</b>. HR exceptions always override.</p>
+        <div class="grid2">
+          <div><label>Departments (comma-separated)</label>
+            <input id="asgDepts" value="${esc(((c.assign || {}).departments || []).join(', '))}" placeholder="e.g. Sales, Engineering">
+            ${deptHint ? `<div class="muted" style="margin-top:4px">${esc(deptHint)}</div>` : ''}</div>
+          <div><label>Employee IDs (comma-separated)</label>
+            <input id="asgEmps" value="${esc(((c.assign || {}).employees || []).join(', '))}" placeholder="e.g. E-101, E-205">
+            <div class="muted" style="margin-top:4px">Works with or without the directory.</div></div>
+        </div>
+        <div class="actions mt">
+          <button class="btn small" id="asgSave">Save assignment</button>
+          <button class="btn ghost small" id="asgClear">Assign to everyone</button>
+        </div>
+      </div>`;
+    const saveAssign = async (depts, emps) => {
+      try {
+        await api(`/api/hr/cycles/${c.id}`, { method: 'PUT', body: JSON.stringify({ action: 'assign',
+          departments: depts.split(',').map(s => s.trim()).filter(Boolean),
+          employees: emps.split(',').map(s => s.trim()).filter(Boolean) }) });
+        toast('Assignment saved.'); refresh();
+      } catch (e) { if (e.message !== 'forbidden') showErr(e.message); }
+    };
+    sub.querySelector('#asgSave').onclick = () => saveAssign(sub.querySelector('#asgDepts').value, sub.querySelector('#asgEmps').value);
+    sub.querySelector('#asgClear').onclick = () => saveAssign('', '');
+  });
+
   // exceptions inline
   document.getElementById('panel').querySelectorAll('[data-except]').forEach(b => b.onclick = () => {
     const c = CYCLES.find(x => x.id === b.dataset.except);
@@ -344,8 +495,6 @@ function renderCyclesPanel() {
       refresh();
     });
   });
-
-  document.getElementById('panel').scrollIntoView({ behavior: 'smooth' });
 }
 
 /* ================= employees panel ================= */
@@ -436,25 +585,6 @@ async function renderEmployeesPanel() {
     await api('/api/hr/employees/' + encodeURIComponent(b.dataset.empdel), { method: 'DELETE' });
     toast('Employee removed.'); renderEmployeesPanel();
   });
-  panel.scrollIntoView({ behavior: 'smooth' });
-}
-
-/* ================= notifications panel ================= */
-async function renderNotifPanel() {
-  const { notifications } = await api('/api/hr/notifications');
-  document.getElementById('panel').innerHTML = `
-    <div class="card mt">
-      <h2>Notifications <span class="muted" style="font-weight:400;font-size:13px">(in-app feed${notifications.some(n => n.emailed) ? ' · email active' : ' · set RESEND_API_KEY for email'})</span></h2>
-      ${notifications.length ? notifications.map(n => `
-        <div class="podium-row" style="${n.read ? 'opacity:.65' : ''}">
-          <span class="badge ${n.event.includes('submitted') ? 'validated' : n.event.includes('reminder') || n.event.includes('reopened') ? 'pending' : 'neutral'}">${esc(n.event.replace('assessment.', ''))}</span>
-          <div><b>${esc(n.title)}</b><div class="muted">${esc(n.body)}</div>
-          <div class="muted">${new Date(n.ts).toLocaleString('en-IN')}${n.emailed ? ' · ✉ emailed' : ''}</div></div>
-        </div>`).join('') : '<div class="empty">No notifications yet.</div>'}
-    </div>`;
-  await api('/api/hr/notifications/read', { method: 'POST' }).catch(() => {});
-  const c = document.getElementById('notifCount'); if (c) c.textContent = '';
-  document.getElementById('panel').scrollIntoView({ behavior: 'smooth' });
 }
 
 /* ================= weights panel ================= */
@@ -488,15 +618,14 @@ async function renderWeightsPanel() {
     try {
       await api('/api/hr/weights', { method: 'PUT', body: JSON.stringify({ weights: w }) });
       toast('Weights saved — all scores recalculated.');
-      renderList();
+      renderWeightsPanel();
     } catch (e) { if (e.message !== 'forbidden') { err.hidden = false; err.textContent = e.message; } }
   };
   document.getElementById('resetW').onclick = async () => {
     await api('/api/hr/weights', { method: 'PUT', body: JSON.stringify({ weights: defaults }) });
     toast('Weights reset to company defaults.');
-    renderList();
+    renderWeightsPanel();
   };
-  document.getElementById('panel').scrollIntoView({ behavior: 'smooth' });
 }
 
 /* ================= full analytics dashboard ================= */
@@ -621,15 +750,17 @@ async function renderDashboard() {
     || '<div class="empty" style="padding:14px 0">None — ratings match well.</div>';
 
   app.innerHTML = `
-    <div class="actions" style="margin-bottom:14px">
-      <button class="btn ghost small" id="backBtn">&larr; Submissions</button>
-      <button class="btn ghost small" id="execPdf">Executive summary PDF</button>
-      <button class="btn ghost small" id="exportXlsxDash">Export Excel</button>
-      <button class="btn ghost small" id="exportAll">Export CSV</button>
-    </div>
-    <div class="section-head" style="margin-top:0">
-      <div class="kicker">Workforce intelligence</div>
-      <h1>Analytics Dashboard <span class="muted" style="font-size:15px;font-family:var(--font-body);font-weight:500">· ${esc(dash.cycleName)}</span></h1>
+    ${navBar('dash')}
+    <div class="list-head">
+      <div>
+        <div class="kicker">Workforce intelligence</div>
+        <h1>Analytics Dashboard <span class="muted" style="font-size:15px;font-family:var(--font-body);font-weight:500">· ${esc(dash.cycleName)}</span></h1>
+      </div>
+      <div class="actions">
+        <button class="btn ghost small" id="execPdf">Executive summary PDF</button>
+        <button class="btn ghost small" id="exportXlsxDash">Export Excel</button>
+        <button class="btn ghost small" id="exportAll">Export CSV</button>
+      </div>
     </div>
     <div class="tabs">${tabs}</div>
 
@@ -682,7 +813,7 @@ async function renderDashboard() {
         <table class="list"><tbody>${skillRows(dash.strengths)}</tbody></table></div>
     </div>`;
 
-  document.getElementById('backBtn').onclick = renderList;
+  bindNav();
   document.getElementById('exportAll').onclick = () =>
     downloadCsv('/api/hr/export.csv' + (currentCycleFilter ? `?cycleId=${currentCycleFilter}` : ''), 'METNMAT_assessments.csv');
   document.getElementById('exportXlsxDash').onclick = () =>
@@ -692,22 +823,6 @@ async function renderDashboard() {
   app.querySelectorAll('.tab').forEach(b => b.onclick = () => { currentCycleFilter = b.dataset.cyc; renderDashboard(); });
   app.querySelectorAll('tr.clickable, .podium-row.clickable').forEach(el => el.onclick = () => renderDetail(el.dataset.id));
   window.scrollTo(0, 0);
-}
-
-/* ================= audit panel ================= */
-async function renderAuditPanel() {
-  const events = await api('/api/hr/audit');
-  const rows = events.map(e => `
-    <tr><td style="white-space:nowrap">${new Date(e.ts).toLocaleString('en-IN')}</td>
-      <td><b>${esc(e.event)}</b></td>
-      <td class="muted">${esc(Object.entries(e).filter(([k]) => !['ts', 'event', 'ip'].includes(k)).map(([k, v]) => `${k}: ${v}`).join(' · '))}</td></tr>`).join('')
-    || '<tr><td colspan="3" class="empty">No events recorded yet.</td></tr>';
-  document.getElementById('panel').innerHTML = `
-    <div class="card mt">
-      <h2>Audit log <span class="muted" style="font-weight:400;font-size:13px">(last 100 events, newest first)</span></h2>
-      <div style="overflow-x:auto"><table class="list mt"><tbody>${rows}</tbody></table></div>
-    </div>`;
-  document.getElementById('panel').scrollIntoView({ behavior: 'smooth' });
 }
 
 /* ================= validation detail ================= */
@@ -905,4 +1020,8 @@ async function renderDetail(id) {
   window.scrollTo(0, 0);
 }
 
-if (hrKey) renderList(); else renderLogin();
+if (hrKey) {
+  api('/api/hr/whoami')
+    .then(who => { ROLE = who.role; showView(ROLE === 'admin' ? 'director' : 'subs'); })
+    .catch(() => {});
+} else renderLogin();
