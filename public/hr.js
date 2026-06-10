@@ -329,7 +329,7 @@ async function renderList() {
     ? `<tr><td colspan="8" class="empty">No submissions${currentCycleFilter ? ' in this cycle' : ''} yet.</td></tr>`
     : [...shown].sort((a, b) => b.submittedAt.localeCompare(a.submittedAt)).map(s => `
       <tr class="clickable" data-id="${s.id}">
-        <td><b>${esc(s.profile.name)}</b><div class="muted">${esc(s.profile.employeeId || '')} · ${esc(s.profile.designation || '')}</div></td>
+        <td><b>${esc(s.profile.name)}</b><div class="muted">${esc(s.profile.email || '')} · ${esc(s.profile.designation || '')}</div></td>
         <td>${esc(s.profile.department || '—')}</td>
         <td>${esc(cycName(s.cycleId))}</td>
         <td>${fmtDate(s.submittedAt)}</td>
@@ -372,7 +372,7 @@ async function renderList() {
       ${shownDrafts.map(dr => `
         <div class="podium-row">
           <span class="badge pending">${Math.round((dr.ratedCount / dr.totalSkills) * 100)}%</span>
-          <div><b>${esc(dr.name)}</b><div class="muted">${esc(dr.employeeId)} · ${esc(dr.department)} · last activity ${new Date(dr.updatedAt).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div></div>
+          <div><b>${esc(dr.name)}</b><div class="muted">${esc(dr.email || '')} · ${esc(dr.department)} · last activity ${new Date(dr.updatedAt).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div></div>
           <span class="p-score">${dr.ratedCount}/${dr.totalSkills}</span>
           <button class="iconbtn danger" data-discard="${dr.id}" title="Discard this draft">✕</button>
         </div>`).join('')}
@@ -648,7 +648,7 @@ function renderCyclesPanel() {
             <input id="asgDepts" value="${esc(((c.assign || {}).departments || []).join(', '))}" placeholder="e.g. Sales, Engineering">
             ${deptHint ? `<div class="muted" style="margin-top:4px">${esc(deptHint)}</div>` : ''}</div>
           <div><label>Employee IDs (comma-separated)</label>
-            <input id="asgEmps" value="${esc(((c.assign || {}).employees || []).join(', '))}" placeholder="e.g. E-101, E-205">
+            <input id="asgEmps" value="${esc(((c.assign || {}).employees || []).join(', '))}" placeholder="emails or names, e.g. priya@metnmat.com">
             <div class="muted" style="margin-top:4px">Works with or without the directory.</div></div>
         </div>
         <div class="actions mt">
@@ -684,7 +684,7 @@ function renderCyclesPanel() {
       <div style="padding:12px">
         <p class="muted" style="margin-bottom:10px">An exception lets one employee start/continue/submit even though the window is closed. It is removed automatically when they submit. If they already submitted and need a redo, delete their submission first.</p>
         <div class="actions" style="margin-bottom:8px">
-          <input type="text" id="exEid" placeholder="Employee ID" style="max-width:160px">
+          <input type="text" id="exEid" placeholder="Employee email" style="max-width:200px">
           <input type="text" id="exName" placeholder="Name (optional)" style="max-width:180px">
           <input type="number" id="exHours" placeholder="Valid hours" value="48" min="1" max="720" style="max-width:110px">
           <button class="btn small" id="exAdd">Grant exception</button>
@@ -900,7 +900,7 @@ async function renderDashboard() {
   const leadRows = dash.leaderboard.length ? dash.leaderboard.map(p => `
     <tr class="clickable" data-id="${p.id}">
       <td>${rankChip(p.rank)}</td>
-      <td><b>${esc(p.name)}</b><div class="muted">${esc(p.employeeId)} · ${esc(p.designation)}</div></td>
+      <td><b>${esc(p.name)}</b><div class="muted">${esc(p.email || '')} · ${esc(p.designation)}</div></td>
       <td>${esc(p.department)}</td>
       <td><b style="font-family:var(--font-head)">${fmtNum(p.rankScore)}</b>${p.provisional ? ' <span class="badge pending">self only</span>' : ''}</td>
       <td>${p.band ? `<span class="badge band">${esc(p.band)}</span>` : `<span class="badge neutral">${esc(p.provisionalBand)}</span>`}</td>
@@ -1108,7 +1108,8 @@ async function renderDetail(id) {
       </div>
     </div>`;
 
-  const profLabels = { name: 'Full name', employeeId: 'SCORA code', email: 'Email', mobile: 'Mobile', department: 'Department', designation: 'Designation', manager: 'Reporting manager', location: 'Location', doj: 'Joining (month/year)' };
+  // no SCORA-code row — the code is employee-private; HR identifies people by email
+  const profLabels = { name: 'Full name', email: 'Email', mobile: 'Mobile', department: 'Department', designation: 'Designation', manager: 'Reporting manager', location: 'Location', doj: 'Joining (month/year)' };
   const profileRows = Object.entries(profLabels)
     .filter(([k]) => sub.profile[k] != null && sub.profile[k] !== '')
     .map(([k, label]) => `<tr><td style="color:var(--muted);width:240px">${esc(label)}</td><td><b>${esc(sub.profile[k])}</b></td></tr>`).join('')

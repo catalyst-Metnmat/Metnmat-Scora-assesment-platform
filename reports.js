@@ -109,7 +109,7 @@ async function employeeReport(res, { sub, scores, cycleName, history, fw }) {
   const doc = start('Employee Assessment Report');
 
   h2(doc, 'Employee');
-  kv(doc, [['Name', p.name], ['Employee ID', p.employeeId], ['Department', p.department], ['Designation', p.designation],
+  kv(doc, [['Name', p.name], ['Email', p.email || '—'], ['Department', p.department], ['Designation', p.designation],
     ['Location', p.location], ['Reporting manager', p.manager], ['Cycle', cycleName],
     ['Submitted', (sub.submittedAt || '').slice(0, 10)], ['Status', sub.status === 'validated' ? 'Validated ' + (sub.validatedAt || '').slice(0, 10) : 'Pending validation']], 3);
 

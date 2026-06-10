@@ -217,7 +217,13 @@ function renderProfile() {
             <input type="text" inputmode="numeric" autocomplete="off" maxlength="2" aria-label="Digit 3">
             <input type="text" inputmode="numeric" autocomplete="off" maxlength="2" aria-label="Digit 4">
           </div>
-          <p class="f-hint">It was shown when you registered and emailed to you. You can paste it here.</p>
+          <p class="f-hint">It was shown when you registered and emailed to you. You can paste it here.
+            <a href="#" id="forgotLink">Forgot your code?</a></p>
+          <div id="forgotBox" hidden style="margin-top:8px">
+            <input type="email" id="fEmail" placeholder="Your registered email" autocomplete="email" spellcheck="false" enterkeyhint="send">
+            <div class="f-err" id="fErr" hidden></div>
+            <button class="btn ghost small" id="fSend" style="margin-top:8px">Email me my code</button>
+          </div>
           <div class="f-err" id="lCodeErr" hidden></div>
         </div>
         <div class="error-msg" id="lErr" hidden></div>
@@ -251,7 +257,7 @@ function renderProfile() {
           <p class="f-hint">Month and year are enough.</p>
           <div class="f-err" id="rDojErr" hidden></div>
         </div>
-        <div class="entry-note"><span class="ico">🔐</span><span>Your details go to HR only. The 4-digit code is your password — keep it safe.</span></div>
+        <div class="entry-note"><span class="ico">🔐</span><span>Only <b>you</b> can see your 4-digit code — not even HR. It's your password; if you ever lose it, we'll email it to you.</span></div>
         <div class="error-msg" id="rErr" hidden></div>
         <button class="btn btn-block mt" id="regBtn">Create my SCORA code</button>
         <p class="entry-foot muted">Already have a code? <a href="#" id="toLogin">Back to log in</a></p>
@@ -297,6 +303,29 @@ function renderProfile() {
     c.addEventListener('focus', () => c.select());
   });
   $id('lName').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); cells[0].focus(); } });
+
+  // ---- forgot code: self-service — the code is emailed, never read out by HR ----
+  $id('forgotLink').onclick = e => {
+    e.preventDefault();
+    const box = $id('forgotBox'); box.hidden = !box.hidden;
+    if (!box.hidden) $id('fEmail').focus();
+  };
+  const sendRecovery = async () => {
+    hideErr('fErr');
+    const email = $id('fEmail').value.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showErr('fErr', 'Enter your registered email address.'); return; }
+    const b = $id('fSend'); b.disabled = true; b.textContent = 'Sending…';
+    try {
+      const r = await fetch('/api/employee/recover', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Could not send the email.');
+      toast(j.message || 'Sent — check your inbox.');
+      $id('forgotBox').hidden = true;
+    } catch (e) { showErr('fErr', e.message); }
+    b.disabled = false; b.textContent = 'Email me my code';
+  };
+  $id('fSend').onclick = sendRecovery;
+  $id('fEmail').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); sendRecovery(); } });
 
   // ---- register: per-field validation with friendly messages ----
   const validators = {

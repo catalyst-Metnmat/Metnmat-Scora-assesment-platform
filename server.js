@@ -53,24 +53,27 @@ function cycleIsLive(cycle, now = Date.now()) {
   if (cycle.closesAt && now > Date.parse(cycle.closesAt)) return false;
   return true;
 }
-function activeException(cycle, employeeId, now = Date.now()) {
-  const eid = normalizeEmpId(employeeId);
-  if (!eid) return null;
+// identity = the SCORA code plus email/name aliases, so HR can grant exceptions
+// by email or name (HR never sees the code — it is employee-private).
+const draftIdentity = d => [d.employeeId, (d.profile || {}).email, (d.profile || {}).name];
+function activeException(cycle, identity, now = Date.now()) {
+  const ids = (Array.isArray(identity) ? identity : [identity]).map(normalizeEmpId).filter(Boolean);
+  if (!ids.length) return null;
   return (cycle.exceptions || []).find(e =>
-    normalizeEmpId(e.employeeId) === eid && (!e.expiresAt || now <= Date.parse(e.expiresAt))) || null;
+    ids.includes(normalizeEmpId(e.employeeId)) && (!e.expiresAt || now <= Date.parse(e.expiresAt))) || null;
 }
 // access = live window, OR a personal exception granted by HR/Admin
-function cycleAccess(cycle, employeeId) {
+function cycleAccess(cycle, identity) {
   if (cycleIsLive(cycle)) return { allowed: true, mode: 'live' };
-  if (activeException(cycle, employeeId)) return { allowed: true, mode: 'exception' };
+  if (activeException(cycle, identity)) return { allowed: true, mode: 'exception' };
   return { allowed: false };
 }
 // which cycle can this employee work in right now?
-function findAccessCycle(cycles, employeeId) {
+function findAccessCycle(cycles, identity) {
   const live = cycles.find(c => cycleIsLive(c));
   if (live) return { cycle: live, mode: 'live' };
   const byNewest = [...cycles].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-  for (const c of byNewest) if (activeException(c, employeeId)) return { cycle: c, mode: 'exception' };
+  for (const c of byNewest) if (activeException(c, identity)) return { cycle: c, mode: 'exception' };
   return null;
 }
 function publicCycleInfo(cycle) {
@@ -428,12 +431,12 @@ app.post('/api/employee/register', submitLimit, wrap(async (req, res) => {
   if (!emailValid(email)) return res.status(400).json({ error: 'A valid email address is required.' });
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(doj)) return res.status(400).json({ error: 'Your joining month and year are required.' });
   const emailNorm = email.toLowerCase();
-  if (await store.getEmpAccountByEmail(emailNorm)) return res.status(409).json({ error: 'This email is already registered. Use your SCORA code to log in (or contact HR if you forgot it).' });
+  if (await store.getEmpAccountByEmail(emailNorm)) return res.status(409).json({ error: 'This email is already registered. Use your SCORA code to log in — or tap "Forgot your code" to have it emailed to you.' });
   const code = await generateScoraCode();
   if (!code) return res.status(507).json({ error: 'Unable to allocate a SCORA code. Contact HR.' });
   const acc = { code, name, nameNorm: name.toLowerCase().replace(/\s+/g, ' '), email, emailNorm, mobile, doj, createdAt: new Date().toISOString() };
   await store.insertEmpAccount(acc);
-  audit('employee.registered', req, { code, email });
+  audit('employee.registered', req, { email }); // never log the code — it is employee-private
   // Email the employee their credentials (username = name, password = SCORA code).
   // Fire-and-forget: sendEmail never throws and no-ops when RESEND_API_KEY is unset.
   const base = (process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
@@ -450,6 +453,21 @@ app.post('/api/employee/login', submitLimit, wrap(async (req, res) => {
   if (!acc || acc.nameNorm !== name.toLowerCase().replace(/\s+/g, ' '))
     return res.status(403).json({ error: 'Name and SCORA code do not match. Check both, or register if you are new.' });
   res.json({ ok: true, code: acc.code, name: acc.name, email: acc.email, mobile: acc.mobile });
+}));
+
+// Forgot code: email it to the registered address. Same response whether the
+// email exists or not (no account enumeration); only the inbox owner learns the code.
+app.post('/api/employee/recover', submitLimit, wrap(async (req, res) => {
+  const email = String((req.body || {}).email || '').trim().toLowerCase();
+  if (!emailValid(email)) return res.status(400).json({ error: 'Enter a valid email address.' });
+  const acc = await store.getEmpAccountByEmail(email);
+  if (acc) {
+    const base = (process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+    const { text, html } = scoraCredentialEmail({ name: acc.name, code: acc.code, loginUrl: `${base}/assessment` });
+    await sendEmail(acc.email, 'Your SCORA code — METNMAT', text, html);
+    audit('employee.code-recovery', req, { email });
+  }
+  res.json({ ok: true, message: 'If that email is registered, your SCORA code has been sent to it.' });
 }));
 
 // ---------------------------------------------------------------- public API
@@ -480,7 +498,7 @@ app.post('/api/session/start', submitLimit, wrap(async (req, res) => {
   if (!acc) return res.status(403).json({ error: 'Invalid SCORA code. Please log in or register first.' });
   const eid = code;
 
-  const access = findAccessCycle(cycles, eid);
+  const access = findAccessCycle(cycles, [acc.code, acc.emailNorm, acc.nameNorm]);
   if (!access) return res.status(423).json({ error: 'The assessment window is closed. Contact HR if you need an exception to be granted.' });
   const { cycle, mode } = access;
 
@@ -517,7 +535,7 @@ app.post('/api/session/start', submitLimit, wrap(async (req, res) => {
       profile: cleanProfile, ratings: {}, step: 0,
       startedAt: new Date().toISOString(), updatedAt: new Date().toISOString()
     };
-    audit('session.started', req, { employeeId: acc.code, cycle: cycle.name, mode });
+    audit('session.started', req, { employee: acc.email, cycle: cycle.name, mode });
   }
   await store.upsertDraft(draft);
   res.json({
@@ -535,7 +553,7 @@ app.get('/api/session/:token', wrap(async (req, res) => {
   if (!draft) return res.status(404).json({ error: 'Session not found' });
   const cycles = await store.listCycles();
   const cycle = cycles.find(c => c.id === draft.cycleId);
-  const access = cycle ? cycleAccess(cycle, draft.employeeId) : { allowed: false };
+  const access = cycle ? cycleAccess(cycle, draftIdentity(draft)) : { allowed: false };
   const expired = cycle ? attemptExpired(cycle, draft, access.mode) : false;
   res.json({
     ok: true,
@@ -553,7 +571,7 @@ async function saveSession(req, res) {
   if (!draft) return res.status(404).json({ error: 'Session not found' });
   const cycles = await store.listCycles();
   const cycle = cycles.find(c => c.id === draft.cycleId);
-  const access = cycle ? cycleAccess(cycle, draft.employeeId) : { allowed: false };
+  const access = cycle ? cycleAccess(cycle, draftIdentity(draft)) : { allowed: false };
   if (!access.allowed) return res.status(423).json({ error: 'The assessment window has closed. Your progress is saved — contact HR for an exception.' });
   if (attemptExpired(cycle, draft, access.mode)) return res.status(423).json({ error: 'Your time limit for this assessment has elapsed. Your progress is saved — contact HR if you need more time.' });
 
@@ -603,7 +621,7 @@ app.post('/api/submissions', submitLimit, wrap(async (req, res) => {
 
   const cycles = await store.listCycles();
   const cycle = cycles.find(c => c.id === draft.cycleId);
-  const access = cycle ? cycleAccess(cycle, draft.employeeId) : { allowed: false };
+  const access = cycle ? cycleAccess(cycle, draftIdentity(draft)) : { allowed: false };
   if (!access.allowed) return res.status(423).json({ error: 'The assessment window has closed. Your progress is saved — contact HR for an exception.' });
   if (attemptExpired(cycle, draft, access.mode)) return res.status(423).json({ error: 'Your time limit for this assessment has elapsed. Your progress is saved — contact HR if you need more time.' });
   const fw = await makeFwResolver()(cycle.id);
@@ -636,9 +654,10 @@ app.post('/api/submissions', submitLimit, wrap(async (req, res) => {
   await store.deleteDraft(draft.id);
   // an exception is single-use: granting closes automatically once used
   if (access.mode === 'exception') {
+    const ids = draftIdentity(draft).map(normalizeEmpId).filter(Boolean);
     await store.updateCycles(cs => {
       const c = cs.find(x => x.id === cycle.id);
-      if (c && c.exceptions) c.exceptions = c.exceptions.filter(e => normalizeEmpId(e.employeeId) !== draft.employeeId);
+      if (c && c.exceptions) c.exceptions = c.exceptions.filter(e => !ids.includes(normalizeEmpId(e.employeeId)));
     });
     audit('exception.consumed', req, { employeeId: sub.profile.employeeId, cycle: cycle.name });
   }
@@ -698,6 +717,28 @@ app.post('/api/me', submitLimit, wrap(async (req, res) => {
 // ---------------------------------------------------------------- HR API
 const hr = express.Router();
 hr.use(hrAuth);
+
+// SCORA codes are employee-private: not even HR/Director may see them. Scrub
+// every 4-digit code (employeeId/code fields) from all HR JSON responses.
+// The HR-managed directory (/employees) is exempt — those are HR's own IDs.
+const CODE_MASK = '••••';
+const looksLikeCode = v => typeof v === 'string' && /^\d{4}$/.test(v);
+function scrubCodes(v) {
+  if (Array.isArray(v)) return v.map(scrubCodes);
+  if (v && typeof v === 'object') {
+    const out = {};
+    for (const [k, val] of Object.entries(v))
+      out[k] = (k === 'employeeId' || k === 'code') && looksLikeCode(val) ? CODE_MASK : scrubCodes(val);
+    return out;
+  }
+  return v;
+}
+hr.use((req, res, next) => {
+  if (req.path === '/employees' || req.path.startsWith('/employees/')) return next();
+  const json = res.json.bind(res);
+  res.json = body => json(scrubCodes(body));
+  next();
+});
 
 hr.get('/whoami', (req, res) => res.json({
   role: req.isAdmin ? 'admin' : 'hr',
@@ -851,7 +892,7 @@ hr.get('/drafts', wrap(async (req, res) => {
   const total = allSkills(fw).length;
   const drafts = await store.listDrafts(req.query.cycleId || undefined);
   res.json(drafts.map(d => ({
-    id: d.id, cycleId: d.cycleId, name: d.profile.name, employeeId: d.profile.employeeId,
+    id: d.id, cycleId: d.cycleId, name: d.profile.name, email: d.profile.email || '',
     department: d.profile.department || '—',
     ratedCount: Object.keys(d.ratings).length, totalSkills: total,
     startedAt: d.startedAt, updatedAt: d.updatedAt
@@ -1021,7 +1062,7 @@ async function buildDashboardData(cycleId) {
     const skills = allSkills(fw);
     const evidence = skills.filter(sk => (s.ratings[sk.id] || {}).evidence).length;
     return {
-      id: s.id, name: s.profile.name, employeeId: s.profile.employeeId || '',
+      id: s.id, name: s.profile.name, email: s.profile.email || '',
       department: (s.profile.department || '—').trim() || '—',
       designation: s.profile.designation || '', location: s.profile.location || '',
       status: s.status, submittedAt: s.submittedAt, validatedAt: s.validatedAt,
@@ -1146,16 +1187,19 @@ hr.get('/audit', wrap(async (_req, res) => res.json(await store.listAudit(100)))
 // ---------------------------------------------------------------- employee directory
 // self-registered employee accounts (SCORA-code logins) — HR can view/remove
 hr.get('/empaccounts', wrap(async (_req, res) => {
+  // the SCORA code is employee-private — never include it here
   const accounts = (await store.listEmpAccounts())
-    .map(({ nameNorm, emailNorm, ...a }) => a)
+    .map(({ nameNorm, emailNorm, code, ...a }) => a)
     .sort((p, q) => (p.name || '').localeCompare(q.name || ''));
   res.json({ accounts });
 }));
-hr.delete('/empaccounts/:code', wrap(async (req, res) => {
-  const a = await store.getEmpAccountByCode(String(req.params.code));
+// delete by email — HR identifies accounts by email, never by code
+hr.delete('/empaccounts/:email', wrap(async (req, res) => {
+  const email = decodeURIComponent(String(req.params.email)).trim().toLowerCase();
+  const a = await store.getEmpAccountByEmail(email);
   if (!a) return res.status(404).json({ error: 'Account not found' });
   await store.deleteEmpAccount(a.code);
-  audit('employee.account-deleted', req, { code: a.code, email: a.email });
+  audit('employee.account-deleted', req, { email: a.email });
   res.json({ ok: true });
 }));
 
@@ -1259,13 +1303,13 @@ hr.get('/export.csv', wrap(async (req, res) => {
   const [fw, cfg, cycles] = await Promise.all([store.getFramework(), store.getConfig(), store.listCycles()]);
   const fwFor = makeFwResolver();
   const subs = await store.listSubmissions(req.query.cycleId || undefined);
-  const head = ['Employee', 'Employee ID', 'Department', 'Designation', 'Location', 'Cycle', 'Submitted', 'Status', 'Overall Self', 'Weighted Self', 'Overall Validated', 'Weighted Validated', 'Band',
+  const head = ['Employee', 'Email', 'Department', 'Designation', 'Location', 'Cycle', 'Submitted', 'Status', 'Overall Self', 'Weighted Self', 'Overall Validated', 'Weighted Validated', 'Band',
     ...fw.domains.map(d => `${d.code} Self`), ...fw.domains.map(d => `${d.code} Validated`)];
   const lines = [head.join(',')];
   for (const s of subs) {
     const sc = computeScores(s, await fwFor(s.cycleId), cfg);
     const cycle = cycles.find(c => c.id === s.cycleId);
-    lines.push([csvEsc(s.profile.name), csvEsc(s.profile.employeeId), csvEsc(s.profile.department), csvEsc(s.profile.designation), csvEsc(s.profile.location),
+    lines.push([csvEsc(s.profile.name), csvEsc(s.profile.email || ''), csvEsc(s.profile.department), csvEsc(s.profile.designation), csvEsc(s.profile.location),
       csvEsc(cycle ? cycle.name : ''), s.submittedAt.slice(0, 10), s.status, sc.overallSelf, sc.weightedSelf, sc.overallValidated ?? '', sc.weightedValidated ?? '', csvEsc(sc.band ?? ''),
       ...sc.domains.map(d => d.selfAvg), ...sc.domains.map(d => d.validatedAvg ?? '')].join(','));
   }
@@ -1288,7 +1332,7 @@ hr.get('/export.xlsx', wrap(async (req, res) => {
 
   // 1. Summary — one row per employee
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(scored.map(({ s, sc }) => ({
-    Employee: s.profile.name, 'Employee ID': s.profile.employeeId, Department: s.profile.department,
+    Employee: s.profile.name, Email: s.profile.email || '', Department: s.profile.department,
     Designation: s.profile.designation, Location: s.profile.location, Cycle: cycName(s.cycleId),
     Submitted: (s.submittedAt || '').slice(0, 10), Status: s.status, Validated: (s.validatedAt || '').slice(0, 10),
     'Overall Self': sc.overallSelf, 'Weighted Self': sc.weightedSelf,
@@ -1302,7 +1346,7 @@ hr.get('/export.xlsx', wrap(async (req, res) => {
   for (const { s } of scored) for (const d of fw.domains) for (const sk of d.skills) {
     const r = s.ratings[sk.id] || {};
     detail.push({
-      Employee: s.profile.name, 'Employee ID': s.profile.employeeId, Cycle: cycName(s.cycleId),
+      Employee: s.profile.name, Email: s.profile.email || '', Cycle: cycName(s.cycleId),
       Domain: `${d.code} - ${d.name}`, 'S.No': sk.sno, Skill: sk.name,
       'Self Rating': r.self ?? '', Evidence: r.evidence || '', 'HR Validated': r.hr ?? '', 'HR Remarks': r.remark || ''
     });
