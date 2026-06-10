@@ -21,5 +21,7 @@ services:
         sync: false
       - key: MAIL_FROM
         value: METNMAT Assessment <noreply@metnmat.com>
+      - key: MAIL_REPLY_TO
+        value: energy@metnmat.com
       - key: PUBLIC_URL
         sync: false

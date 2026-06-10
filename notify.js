@@ -8,11 +8,13 @@
  * must not start emailing employees on submit/assign/reopen/evaluate.
  */
 const MAIL_FROM = process.env.MAIL_FROM || 'METNMAT Assessment <noreply@metnmat.com>';
+const MAIL_REPLY_TO = process.env.MAIL_REPLY_TO || ''; // a real monitored inbox improves spam placement
 
 async function sendEmail(to, subject, text, html) {
   if (!process.env.RESEND_API_KEY || !to) return false;
   try {
     const payload = { from: MAIL_FROM, to: [to], subject, text };
+    if (MAIL_REPLY_TO) payload.reply_to = MAIL_REPLY_TO;
     if (html) payload.html = html;
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',

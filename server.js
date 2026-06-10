@@ -414,6 +414,7 @@ function scoraCredentialEmail({ name, code, loginUrl }) {
           `</td></tr>` +
           `<tr><td style="padding:14px 32px 28px;color:#8aa0c4;font-size:12px;line-height:1.6">` +
             `<p style="margin:0">Keep this code safe — it is your password to start the assessment and to view your results later. If you didn't request this, you can ignore this email.</p>` +
+            `<p style="margin:12px 0 0;border-top:1px solid #1c2c4a;padding-top:12px;color:#64789c">Sent by SCORA, the skill &amp; competency platform of METNMAT Innovations Pvt. Ltd. · <a href="https://metnmat.com" style="color:#8aa0c4">metnmat.com</a></p>` +
           `</td></tr>` +
         `</table>` +
       `</td></tr></table>` +
