@@ -118,22 +118,36 @@ function lockWizard(message) {
 }
 
 /* ---------------- progress shell ---------------- */
+// a question is "answered" according to its type; optional questions don't count
+function answered(sk) {
+  const r = state.ratings[sk.id];
+  if (!r) return false;
+  const type = sk.type || 'rating';
+  if (type === 'rating') return r.self != null;
+  if (type === 'mcq') return r.answer != null && r.answer !== '';
+  if (type === 'text') return !!String(r.answer || '').trim();
+  return false;
+}
+const requiredSkills = d => d.skills.filter(sk => sk.required !== false);
 function totalRated() {
-  return DATA.domains.flatMap(d => d.skills).filter(sk => state.ratings[sk.id] && state.ratings[sk.id].self != null).length;
+  return DATA.domains.flatMap(requiredSkills).filter(answered).length;
+}
+function totalRequired() {
+  return DATA.domains.reduce((s, d) => s + requiredSkills(d).length, 0);
 }
 function domainRated(d) {
-  return d.skills.filter(sk => state.ratings[sk.id] && state.ratings[sk.id].self != null).length;
+  return requiredSkills(d).filter(answered).length;
 }
 
 function progressShell(inner) {
-  const total = DATA.domains.reduce((s, d) => s + d.skills.length, 0);
+  const total = totalRequired();
   const rated = totalRated();
-  const pct = Math.round((rated / total) * 100);
+  const pct = Math.round((rated / Math.max(1, total)) * 100);
   const stepLabel = state.step === -1 ? 'Employee Profile'
     : state.step >= DATA.domains.length ? 'Review & Submit'
     : `Domain ${DATA.domains[state.step].code} of ${DATA.domains[DATA.domains.length - 1].code}`;
   const dots = DATA.domains.map((d, i) => {
-    const done = domainRated(d) === d.skills.length;
+    const done = domainRated(d) === requiredSkills(d).length;
     return `<button class="ddot ${i === state.step ? 'cur' : done ? 'done' : ''}" data-goto="${i}" title="${esc(d.name)}" aria-label="Go to domain ${d.code}: ${esc(d.name)}">${d.code}</button>`;
   }).join('');
   return `
@@ -229,13 +243,26 @@ function renderDomain() {
   const d = DATA.domains[state.step];
   const cards = d.skills.map(sk => {
     const r = state.ratings[sk.id] || {};
-    const btns = [0, 1, 2, 3, 4, 5].map(n =>
-      `<button class="rate-btn ${r.self === n ? 'on' : ''}" data-sk="${sk.id}" data-v="${n}"
-        aria-pressed="${r.self === n}" aria-label="Rate ${n} — ${scaleShort[n]}">${n}<small>${scaleShort[n]}</small></button>`).join('');
+    const type = sk.type || 'rating';
+    const meta = `${sk.required === false ? '<span class="badge neutral" style="font-size:10.5px">Optional</span>' : ''}${sk.difficulty ? ` <span class="badge pending" style="font-size:10.5px">${esc(sk.difficulty)}</span>` : ''}`;
+    let body;
+    if (type === 'mcq') {
+      body = `<div role="group" aria-label="${esc(sk.name)} options">` + (sk.options || []).map((o, i) => `
+        <label class="choice ${Number(r.answer) === i ? 'selected' : ''}">
+          <input type="radio" name="mcq-${sk.id}" data-mcq="${sk.id}" value="${i}" ${Number(r.answer) === i ? 'checked' : ''}>
+          <span>${esc(o)}</span></label>`).join('') + '</div>';
+    } else if (type === 'text') {
+      body = `<textarea data-txt="${sk.id}" maxlength="2000" rows="3" placeholder="Write your answer…">${esc(r.answer || '')}</textarea>`;
+    } else {
+      body = `<div class="rate-row" role="group" aria-label="${esc(sk.name)} rating">` +
+        [0, 1, 2, 3, 4, 5].map(n =>
+          `<button class="rate-btn ${r.self === n ? 'on' : ''}" data-sk="${sk.id}" data-v="${n}"
+            aria-pressed="${r.self === n}" aria-label="Rate ${n} — ${scaleShort[n]}">${n}<small>${scaleShort[n]}</small></button>`).join('') + '</div>';
+    }
     return `
       <div class="card skill-card" id="card-${sk.id}">
-        <div class="sname"><span class="sno">${sk.sno}.</span>${esc(sk.name)}</div>
-        <div class="rate-row" role="group" aria-label="${esc(sk.name)} rating">${btns}</div>
+        <div class="sname"><span class="sno">${sk.sno}.</span>${esc(sk.name)} ${meta}</div>
+        ${body}
         <div class="evidence"><input type="text" data-ev="${sk.id}" maxlength="500"
           placeholder="Evidence — projects, tools, certifications or examples (optional)" value="${esc(r.evidence || '')}"></div>
       </div>`;
@@ -270,6 +297,17 @@ function renderDomain() {
     shell.replaceWith(tmp.querySelector('.progress-shell'));
     bindDots(); startCountdown(); setSaveStatus(saveStatus);
   });
+  app.querySelectorAll('[data-mcq]').forEach(el => el.addEventListener('change', () => {
+    const id = el.dataset.mcq;
+    state.ratings[id] = { ...(state.ratings[id] || {}), answer: Number(el.value) };
+    queueSave({ ratings: { [id]: state.ratings[id] } });
+    document.querySelectorAll(`#card-${CSS.escape(id)} .choice`).forEach(c => c.classList.toggle('selected', c.querySelector('input').checked));
+  }));
+  app.querySelectorAll('[data-txt]').forEach(el => el.addEventListener('input', () => {
+    const id = el.dataset.txt;
+    state.ratings[id] = { ...(state.ratings[id] || {}), answer: el.value };
+    queueSave({ ratings: { [id]: state.ratings[id] } });
+  }));
   app.querySelectorAll('[data-ev]').forEach(el => el.addEventListener('input', () => {
     const id = el.dataset.ev;
     state.ratings[id] = { ...(state.ratings[id] || {}), evidence: el.value };
@@ -277,7 +315,7 @@ function renderDomain() {
   }));
   document.getElementById('back').onclick = () => { state.step--; if (state.step >= 0) queueSave(); render(); window.scrollTo(0, 0); };
   document.getElementById('next').onclick = () => {
-    const un = d.skills.filter(sk => !(state.ratings[sk.id] && state.ratings[sk.id].self != null));
+    const un = requiredSkills(d).filter(sk => !answered(sk));
     if (un.length) {
       const err = document.getElementById('err');
       err.hidden = false;
@@ -292,15 +330,16 @@ function renderDomain() {
 
 /* ---------------- review step ---------------- */
 function renderReview() {
-  const total = DATA.domains.reduce((s, d) => s + d.skills.length, 0);
+  const total = totalRequired();
   const rated = totalRated();
   const rows = DATA.domains.map(d => {
     const n = domainRated(d);
-    const avg = n ? (d.skills.reduce((s, sk) => s + (state.ratings[sk.id]?.self || 0), 0) / d.skills.length).toFixed(2) : '—';
-    const ok = n === d.skills.length;
+    const selfScored = d.skills.filter(sk => state.ratings[sk.id] && state.ratings[sk.id].self != null);
+    const avg = selfScored.length ? (selfScored.reduce((s, sk) => s + (state.ratings[sk.id].self || 0), 0) / selfScored.length).toFixed(2) : '—';
+    const ok = n === requiredSkills(d).length;
     return `<tr class="clickable" data-goto-row="${DATA.domains.indexOf(d)}">
       <td><span class="lvl lvl-domain">${d.code}</span></td>
-      <td>${esc(d.name)}</td><td>${n}/${d.skills.length}</td><td>${ok ? avg : '<span class="badge pending">incomplete</span>'}</td></tr>`;
+      <td>${esc(d.name)}</td><td>${n}/${requiredSkills(d).length}</td><td>${ok ? avg : '<span class="badge pending">incomplete</span>'}</td></tr>`;
   }).join('');
 
   app.innerHTML = progressShell(`

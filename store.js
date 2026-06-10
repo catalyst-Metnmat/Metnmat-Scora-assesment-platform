@@ -44,6 +44,9 @@ function fileDriver() {
   if (!Array.isArray(db.cycles)) db.cycles = [];
   if (!Array.isArray(db.submissions)) db.submissions = [];
   if (!Array.isArray(db.drafts)) db.drafts = [];
+  if (!Array.isArray(db.employees)) db.employees = [];
+  if (!Array.isArray(db.notifications)) db.notifications = [];
+  if (!db.frameworkSnapshots || typeof db.frameworkSnapshots !== 'object') db.frameworkSnapshots = {};
 
   let framework = loadJson(FW_FILE, null);
   let config = loadJson(CFG_FILE, {});
@@ -103,6 +106,18 @@ function fileDriver() {
     async getDraftByEmployee(cycleId, eid) { const d = db.drafts.find(x => x.cycleId === cycleId && x.employeeId === eid); return d ? JSON.parse(JSON.stringify(d)) : null; },
     async upsertDraft(draft) { const i = db.drafts.findIndex(x => x.id === draft.id); if (i >= 0) db.drafts[i] = draft; else db.drafts.push(draft); saveDb(); },
     async deleteDraft(id) { const i = db.drafts.findIndex(x => x.id === id); if (i >= 0) db.drafts.splice(i, 1); saveDb(); },
+    // ---- framework snapshots (one frozen copy per cycle) ----
+    async saveFrameworkSnapshot(cycleId, fw) { db.frameworkSnapshots[cycleId] = fw; saveDb(); },
+    async getFrameworkSnapshot(cycleId) { return db.frameworkSnapshots[cycleId] ? JSON.parse(JSON.stringify(db.frameworkSnapshots[cycleId])) : null; },
+    // ---- employee directory ----
+    async listEmployees() { return db.employees.map(e => JSON.parse(JSON.stringify(e))); },
+    async getEmployee(eidNorm) { const e = db.employees.find(x => x.employeeIdNorm === eidNorm); return e ? JSON.parse(JSON.stringify(e)) : null; },
+    async upsertEmployee(emp) { const i = db.employees.findIndex(x => x.employeeIdNorm === emp.employeeIdNorm); if (i >= 0) db.employees[i] = { ...db.employees[i], ...emp }; else db.employees.push(emp); saveDb(); },
+    async deleteEmployee(eidNorm) { const i = db.employees.findIndex(x => x.employeeIdNorm === eidNorm); if (i >= 0) db.employees.splice(i, 1); saveDb(); },
+    // ---- notifications ----
+    async insertNotification(n) { db.notifications.unshift(n); db.notifications = db.notifications.slice(0, 500); saveDb(); },
+    async listNotifications(limit = 50) { return db.notifications.slice(0, limit).map(n => JSON.parse(JSON.stringify(n))); },
+    async markNotificationsRead() { db.notifications.forEach(n => n.read = true); saveDb(); },
     _backupTarget() { return { db, dir: DATA_DIR }; }
   };
 }
@@ -142,6 +157,8 @@ function mongoDriver(uri) {
       await (await col('audit')).createIndex({ ts: -1 });
       await (await col('drafts')).createIndex({ token: 1 });
       await (await col('drafts')).createIndex({ cycleId: 1, employeeId: 1 });
+      await (await col('employees')).createIndex({ employeeIdNorm: 1 }, { unique: true });
+      await (await col('notifications')).createIndex({ ts: -1 });
     },
     async getSecrets() {
       const meta = await col('meta');
@@ -187,6 +204,18 @@ function mongoDriver(uri) {
     async getDraftByEmployee(cycleId, eid) { const d = await (await col('drafts')).findOne({ cycleId, employeeId: eid }); if (!d) return null; const { _id, ...rest } = d; return rest; },
     async upsertDraft(draft) { await (await col('drafts')).replaceOne({ _id: draft.id }, { _id: draft.id, ...draft }, { upsert: true }); },
     async deleteDraft(id) { await (await col('drafts')).deleteOne({ _id: id }); },
+    // ---- framework snapshots (one frozen copy per cycle) ----
+    async saveFrameworkSnapshot(cycleId, fw) { await (await col('meta')).updateOne({ _id: 'fwsnap_' + cycleId }, { $set: { value: fw } }, { upsert: true }); },
+    async getFrameworkSnapshot(cycleId) { const d = await (await col('meta')).findOne({ _id: 'fwsnap_' + cycleId }); return d ? d.value : null; },
+    // ---- employee directory ----
+    async listEmployees() { return (await (await col('employees')).find({}).toArray()).map(({ _id, ...e }) => e); },
+    async getEmployee(eidNorm) { const e = await (await col('employees')).findOne({ employeeIdNorm: eidNorm }); if (!e) return null; const { _id, ...rest } = e; return rest; },
+    async upsertEmployee(emp) { await (await col('employees')).updateOne({ employeeIdNorm: emp.employeeIdNorm }, { $set: emp }, { upsert: true }); },
+    async deleteEmployee(eidNorm) { await (await col('employees')).deleteOne({ employeeIdNorm: eidNorm }); },
+    // ---- notifications ----
+    async insertNotification(n) { await (await col('notifications')).insertOne({ _id: n.id, ...n }); },
+    async listNotifications(limit = 50) { return (await (await col('notifications')).find({}).sort({ ts: -1 }).limit(limit).toArray()).map(({ _id, ...x }) => x); },
+    async markNotificationsRead() { await (await col('notifications')).updateMany({ read: { $ne: true } }, { $set: { read: true } }); },
     _backupTarget() { return null; } // Mongo data is durable; no local file backup
   };
 }

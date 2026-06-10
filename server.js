@@ -18,6 +18,8 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const store = require('./store');
+const { notify } = require('./notify');
+const reports = require('./reports');
 
 const PORT = Number(process.env.PORT) || 3010;
 const isServerless = !!process.env.VERCEL;
@@ -76,6 +78,24 @@ function publicCycleInfo(cycle) {
   return { id: cycle.id, name: cycle.name, opensAt: cycle.opensAt || null, closesAt: cycle.closesAt || null, isLive: cycleIsLive(cycle) };
 }
 
+// ---- framework snapshots: each cycle scores against the framework frozen at
+// its creation, so designer edits never corrupt historical results.
+// Legacy cycles without a snapshot get one lazily (from the live framework).
+function makeFwResolver() {
+  const cache = {};
+  return async cycleId => {
+    if (!cycleId) return store.getFramework();
+    if (!cache[cycleId]) {
+      cache[cycleId] = (async () => {
+        let snap = await store.getFrameworkSnapshot(cycleId);
+        if (!snap) { snap = await store.getFramework(); await store.saveFrameworkSnapshot(cycleId, snap); }
+        return snap;
+      })();
+    }
+    return cache[cycleId];
+  };
+}
+
 function allSkills(fw) { return fw.domains.flatMap(d => d.skills); }
 
 function activeWeights(fw, cfg) {
@@ -89,17 +109,21 @@ function computeScores(sub, fw, cfg) {
   const weights = activeWeights(fw, cfg);
   const totalW = Object.values(weights).reduce((s, v) => s + v, 0) || 1;
   const domains = fw.domains.map(d => {
-    let selfSum = 0, valSum = 0, valCount = 0;
+    // per-question weight (default 1 — the master template uses 1 throughout).
+    // Self average covers self-scorable questions (rating / auto-scored MCQ);
+    // validated average requires HR to have rated every question in the domain.
+    let selfSum = 0, selfW = 0, valSum = 0, valW = 0, valCount = 0;
     for (const sk of d.skills) {
+      const w = Math.max(0.01, Number(sk.weight) || 1);
       const r = sub.ratings[sk.id] || {};
-      selfSum += Number(r.self) || 0;
-      if (r.hr != null && r.hr !== '') { valSum += Number(r.hr); valCount++; }
+      if (r.self != null && r.self !== '') { selfSum += (Number(r.self) || 0) * w; selfW += w; }
+      if (r.hr != null && r.hr !== '') { valSum += Number(r.hr) * w; valW += w; valCount++; }
     }
     const n = d.skills.length;
     return {
       code: d.code, name: d.name, skillCount: n, weight: weights[d.code],
-      selfAvg: n ? +(selfSum / n).toFixed(2) : 0,
-      validatedAvg: n && valCount === n ? +(valSum / n).toFixed(2) : null,
+      selfAvg: selfW ? +(selfSum / selfW).toFixed(2) : 0,
+      validatedAvg: n && valCount === n && valW ? +(valSum / valW).toFixed(2) : null,
       validatedCount: valCount
     };
   });
@@ -132,20 +156,36 @@ function subSummary(s, fw, cfg, cycles) {
   };
 }
 
-async function employeeHistory(employeeId, excludeSubId, fw, cfg, cycles) {
+async function employeeHistory(employeeId, excludeSubId, fwFor, cfg, cycles) {
   const eid = normalizeEmpId(employeeId);
   if (!eid) return [];
   const subs = (await store.listSubmissions())
     .filter(s => s.id !== excludeSubId && normalizeEmpId(s.profile.employeeId) === eid);
-  return subs.map(s => {
-    const sc = computeScores(s, fw, cfg);
+  const out = [];
+  for (const s of subs) {
+    const sc = computeScores(s, await fwFor(s.cycleId), cfg);
     const cycle = cycles.find(c => c.id === s.cycleId);
-    return {
+    out.push({
       id: s.id, cycleName: cycle ? cycle.name : '—', submittedAt: s.submittedAt, status: s.status,
       weightedSelf: sc.weightedSelf, weightedValidated: sc.weightedValidated, band: sc.band,
-      domains: sc.domains.map(d => ({ code: d.code, selfAvg: d.selfAvg, validatedAvg: d.validatedAvg }))
-    };
-  }).sort((a, b) => a.submittedAt.localeCompare(b.submittedAt));
+      domains: sc.domains.map(d => ({ code: d.code, name: d.name, selfAvg: d.selfAvg, validatedAvg: d.validatedAvg }))
+    });
+  }
+  return out.sort((a, b) => a.submittedAt.localeCompare(b.submittedAt));
+}
+
+// which questions must be answered before submission (type/required aware)
+function missingRequired(fw, ratings) {
+  return allSkills(fw).filter(sk => {
+    if (sk.required === false) return false;
+    const r = ratings[sk.id];
+    if (!r) return true;
+    const type = sk.type || 'rating';
+    if (type === 'rating') return r.self == null || isNaN(Number(r.self)) || Number(r.self) < 0 || Number(r.self) > 5;
+    if (type === 'mcq') return r.answer == null || r.answer === '';
+    if (type === 'text') return !String(r.answer || '').trim();
+    return false;
+  });
 }
 
 const csvEsc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
@@ -235,13 +275,17 @@ const wrap = fn => (req, res) => fn(req, res).catch(err => {
 
 // ---------------------------------------------------------------- public API
 app.get('/api/skills', wrap(async (_req, res) => {
-  const fw = await store.getFramework();
   const cycles = await store.listCycles();
   const open = cycles.find(c => c.status === 'open') || null;
+  // employees always see the framework FROZEN for the active cycle
+  const fw = await makeFwResolver()(open ? open.id : null);
   res.json({
     company: fw.company, title: fw.title, tagline: fw.tagline,
     scale: fw.scale, profileFields: fw.profileFields,
-    domains: fw.domains.map(d => ({ code: d.code, name: d.name, skills: d.skills })),
+    domains: fw.domains.map(d => ({
+      code: d.code, name: d.name,
+      skills: d.skills.map(sk => ({ id: sk.id, sno: sk.sno, name: sk.name, type: sk.type || 'rating', options: sk.options, required: sk.required !== false, difficulty: sk.difficulty }))
+    })),
     cycle: publicCycleInfo(open)
   });
 }));
@@ -250,22 +294,36 @@ app.get('/api/skills', wrap(async (_req, res) => {
 // Start (or resume) an assessment session. Identified by employee ID within the
 // accessible cycle; returns a session token used for autosave and submission.
 app.post('/api/session/start', submitLimit, wrap(async (req, res) => {
-  const fw = await store.getFramework();
   const cycles = await store.listCycles();
   const { profile } = req.body || {};
   if (!profile || typeof profile !== 'object') return res.status(400).json({ error: 'Profile is required' });
-  for (const f of fw.profileFields.filter(f => f.required)) {
-    if (!profile[f.id] || !String(profile[f.id]).trim()) return res.status(400).json({ error: `${f.label} is required` });
-  }
   const eid = normalizeEmpId(profile.employeeId);
+
+  // employee directory enforcement: when HR has onboarded employees, only
+  // registered ACTIVE employees may take the assessment
+  const directory = await store.listEmployees();
+  let dirRec = null;
+  if (directory.length) {
+    dirRec = directory.find(e => e.employeeIdNorm === eid);
+    if (!dirRec) return res.status(403).json({ error: 'This employee ID is not registered. Contact HR to be added to the employee directory.' });
+    if (dirRec.status === 'inactive') return res.status(403).json({ error: 'This employee record is inactive. Contact HR.' });
+  }
+
   const access = findAccessCycle(cycles, eid);
   if (!access) return res.status(423).json({ error: 'The assessment window is closed. Contact HR if you need an exception to be granted.' });
   const { cycle, mode } = access;
+  const fw = await makeFwResolver()(cycle.id);
+  for (const f of fw.profileFields.filter(f => f.required)) {
+    if ((dirRec && dirRec[f.id]) || (profile[f.id] && String(profile[f.id]).trim())) continue;
+    return res.status(400).json({ error: `${f.label} is required` });
+  }
 
   const existingSub = (await store.listSubmissions(cycle.id)).find(s => normalizeEmpId(s.profile.employeeId) === eid);
   if (existingSub) return res.status(409).json({ error: `An assessment for employee ID "${String(profile.employeeId).trim()}" is already submitted in ${cycle.name}. Contact HR if it needs to be redone.` });
 
-  const cleanProfile = Object.fromEntries(fw.profileFields.map(f => [f.id, String(profile[f.id] || '').trim().slice(0, 300)]));
+  // directory record wins for identity fields (consistent reporting)
+  const cleanProfile = Object.fromEntries(fw.profileFields.map(f =>
+    [f.id, String((dirRec && dirRec[f.id]) || profile[f.id] || '').trim().slice(0, 300)]));
   let draft = await store.getDraftByEmployee(cycle.id, eid);
   if (draft) {
     draft.profile = cleanProfile;
@@ -314,22 +372,34 @@ async function saveSession(req, res) {
   let body = req.body;
   if (Buffer.isBuffer(body)) { try { body = JSON.parse(body.toString('utf8')); } catch { body = {}; } }
   const { ratings, step, profile } = body || {};
+  const fw = await makeFwResolver()(draft.cycleId);
   if (ratings && typeof ratings === 'object') {
-    const fw = await store.getFramework();
-    const valid = new Set(allSkills(fw).map(sk => sk.id));
+    const byId = Object.fromEntries(allSkills(fw).map(sk => [sk.id, sk]));
     for (const [id, r] of Object.entries(ratings)) {
-      if (!valid.has(id) || !r || typeof r !== 'object') continue;
-      const n = Number(r.self);
-      draft.ratings[id] = {
-        self: isNaN(n) || r.self == null || r.self === '' ? null : Math.min(5, Math.max(0, Math.round(n))),
-        evidence: String(r.evidence || '').trim().slice(0, 500)
-      };
-      if (draft.ratings[id].self == null) delete draft.ratings[id];
+      const sk = byId[id];
+      if (!sk || !r || typeof r !== 'object') continue;
+      const type = sk.type || 'rating';
+      const entry = { evidence: String(r.evidence || '').trim().slice(0, 500) };
+      if (type === 'rating') {
+        const n = Number(r.self);
+        entry.self = isNaN(n) || r.self == null || r.self === '' ? null : Math.min(5, Math.max(0, Math.round(n)));
+      } else if (type === 'mcq') {
+        const a = Number(r.answer);
+        entry.answer = isNaN(a) || r.answer == null || r.answer === '' ? null : Math.max(0, Math.round(a));
+        if (entry.answer != null && !(sk.options || [])[entry.answer]) entry.answer = null;
+        // auto-score when the question defines a correct option (HR can override)
+        entry.self = entry.answer == null ? null : (sk.correct != null ? (entry.answer === Number(sk.correct) ? 5 : 0) : null);
+      } else if (type === 'text') {
+        entry.answer = String(r.answer || '').trim().slice(0, 2000);
+        entry.self = null; // subjective answers are scored by HR
+      }
+      const hasContent = entry.self != null || (entry.answer != null && entry.answer !== '') || entry.evidence;
+      if (hasContent) draft.ratings[id] = { ...draft.ratings[id], ...entry };
+      else delete draft.ratings[id];
     }
   }
   if (step != null && !isNaN(Number(step))) draft.step = Math.max(0, Math.round(Number(step)));
   if (profile && typeof profile === 'object') {
-    const fw = await store.getFramework();
     draft.profile = Object.fromEntries(fw.profileFields.map(f => [f.id, String(profile[f.id] ?? draft.profile[f.id] ?? '').trim().slice(0, 300)]));
   }
   draft.updatedAt = new Date().toISOString();
@@ -345,27 +415,28 @@ app.post('/api/submissions', submitLimit, wrap(async (req, res) => {
   const draft = await store.getDraftByToken(String(token || ''));
   if (!draft) return res.status(404).json({ error: 'Session not found or already submitted. Refresh the page.' });
 
-  const fw = await store.getFramework();
   const cycles = await store.listCycles();
   const cycle = cycles.find(c => c.id === draft.cycleId);
   const access = cycle ? cycleAccess(cycle, draft.employeeId) : { allowed: false };
   if (!access.allowed) return res.status(423).json({ error: 'The assessment window has closed. Your progress is saved — contact HR for an exception.' });
+  const fw = await makeFwResolver()(cycle.id);
 
-  const skills = allSkills(fw);
-  const missing = skills.filter(sk => {
-    const r = draft.ratings[sk.id];
-    return !r || r.self == null || isNaN(Number(r.self)) || Number(r.self) < 0 || Number(r.self) > 5;
-  });
-  if (missing.length) return res.status(400).json({ error: `${missing.length} skill(s) not rated. Enter 0 explicitly where there is no exposure.` });
+  const missing = missingRequired(fw, draft.ratings);
+  if (missing.length) return res.status(400).json({ error: `${missing.length} question(s) not answered. Required questions cannot be skipped (enter 0 for no exposure on ratings).` });
 
   const existing = await store.listSubmissions(cycle.id);
   if (existing.find(s => normalizeEmpId(s.profile.employeeId) === draft.employeeId))
     return res.status(409).json({ error: `An assessment for this employee ID already exists in ${cycle.name}. Contact HR if it needs to be redone.` });
 
   const clean = {};
-  for (const sk of skills) {
+  for (const sk of allSkills(fw)) {
     const r = draft.ratings[sk.id];
-    clean[sk.id] = { self: Math.round(Number(r.self)), evidence: String(r.evidence || '').trim().slice(0, 500) };
+    if (!r) continue; // skipped optional question
+    clean[sk.id] = {
+      self: r.self == null ? null : Math.round(Number(r.self)),
+      evidence: String(r.evidence || '').trim().slice(0, 500)
+    };
+    if (r.answer !== undefined && r.answer !== null && r.answer !== '') clean[sk.id].answer = r.answer;
   }
   const sub = {
     id: newId(), cycleId: cycle.id,
@@ -385,7 +456,56 @@ app.post('/api/submissions', submitLimit, wrap(async (req, res) => {
     audit('exception.consumed', req, { employeeId: sub.profile.employeeId, cycle: cycle.name });
   }
   audit('submission.created', req, { sub: sub.id, employeeId: sub.profile.employeeId, cycle: cycle.name, mode: access.mode });
+  notify('assessment.submitted', {
+    title: `Assessment submitted: ${sub.profile.name}`,
+    body: `${sub.profile.name} (${sub.profile.employeeId}, ${sub.profile.department || '—'}) submitted their self-assessment for ${cycle.name}${access.mode === 'exception' ? ' via an HR exception' : ''}. Ready for validation.`,
+    emailTo: process.env.HR_NOTIFY_EMAIL
+  });
   res.json({ ok: true, id: sub.id, cycle: cycle.name });
+}));
+
+// ---------------------------------------------------------------- employee self-service (/my)
+// Identity check without accounts: employee ID + date of joining must match.
+app.post('/api/me', submitLimit, wrap(async (req, res) => {
+  const { employeeId, doj } = req.body || {};
+  const eid = normalizeEmpId(employeeId);
+  if (!eid || !doj) return res.status(400).json({ error: 'Employee ID and date of joining are required.' });
+  const dirRec = await store.getEmployee(eid);
+  const subs = (await store.listSubmissions()).filter(s => normalizeEmpId(s.profile.employeeId) === eid);
+  const knownDoj = (dirRec && dirRec.doj) || (subs.length ? subs[subs.length - 1].profile.doj : null);
+  if (!knownDoj) return res.status(404).json({ error: 'No records found for this employee ID.' });
+  if (String(knownDoj).slice(0, 10) !== String(doj).slice(0, 10)) return res.status(403).json({ error: 'The date of joining does not match our records.' });
+
+  const [cfg, cycles] = await Promise.all([store.getConfig(), store.listCycles()]);
+  const fwFor = makeFwResolver();
+  const history = [];
+  for (const s of subs.sort((a, b) => a.submittedAt.localeCompare(b.submittedAt))) {
+    const fw = await fwFor(s.cycleId);
+    const sc = computeScores(s, fw, cfg);
+    history.push({
+      cycleName: (cycles.find(c => c.id === s.cycleId) || {}).name || '—',
+      submittedAt: s.submittedAt, status: s.status,
+      overallSelf: sc.overallSelf, weightedSelf: sc.weightedSelf,
+      overallValidated: sc.overallValidated, weightedValidated: sc.weightedValidated,
+      band: sc.band, provisionalBand: sc.provisionalBand,
+      domains: sc.domains.map(d => ({ code: d.code, name: d.name, selfAvg: d.selfAvg, validatedAvg: d.validatedAvg }))
+    });
+  }
+  // skill profile from the latest submission
+  const latest = subs[subs.length - 1];
+  const latestFw = await fwFor(latest.cycleId);
+  const skillScores = latestFw.domains.flatMap(d => d.skills.map(sk => {
+    const r = latest.ratings[sk.id] || {};
+    const score = r.hr != null && r.hr !== '' ? Number(r.hr) : (r.self != null ? Number(r.self) : null);
+    return score == null ? null : { sno: sk.sno, name: sk.name, domain: d.code, score };
+  })).filter(Boolean).sort((a, b) => b.score - a.score);
+  res.json({
+    name: latest.profile.name, employeeId: latest.profile.employeeId,
+    department: latest.profile.department, designation: latest.profile.designation,
+    history,
+    topSkills: skillScores.slice(0, 8),
+    weakSkills: skillScores.slice(-8).reverse()
+  });
 }));
 
 // ---------------------------------------------------------------- HR API
@@ -410,7 +530,14 @@ hr.post('/cycles', wrap(async (req, res) => {
   await store.updateCycles(cs => { for (const x of cs) if (x.status === 'open') { x.status = 'closed'; x.closedAt = new Date().toISOString(); } });
   const cyc = { id: newId(), name, status: 'open', opensAt: o, closesAt: c, exceptions: [], createdAt: new Date().toISOString(), closedAt: null };
   await store.insertCycle(cyc);
+  // freeze the framework for this cycle so later designer edits never affect its scoring
+  await store.saveFrameworkSnapshot(cyc.id, await store.getFramework());
   audit('cycle.opened', req, { cycle: name, window: `${o || 'now'} -> ${c || 'no limit'}` });
+  notify('assessment.assigned', {
+    title: `Assessment cycle opened: ${name}`,
+    body: `The assessment window ${name} is now ${o ? 'scheduled (opens ' + o.slice(0, 16).replace('T', ' ') + ' UTC)' : 'open'}${c ? ', closes ' + c.slice(0, 16).replace('T', ' ') + ' UTC' : ''}. Employees can take their assessment at the portal.`,
+    emailTo: process.env.HR_NOTIFY_EMAIL
+  });
   res.json(cyc);
 }));
 
@@ -454,6 +581,12 @@ hr.post('/cycles/:id/exceptions', wrap(async (req, res) => {
   });
   if (!found) return res.status(404).json({ error: 'Cycle not found' });
   audit('exception.granted', req, { employeeId: eid, cycle: found.name, expiresAt: expiresAt || 'until removed' });
+  const dirRec = await store.getEmployee(normalizeEmpId(eid));
+  notify('assessment.reopened', {
+    title: `Assessment reopened for ${name || eid}`,
+    body: `An exception was granted for employee ID ${eid} in ${found.name}${expiresAt ? ', valid until ' + expiresAt.slice(0, 16).replace('T', ' ') + ' UTC' : ''}. They can now start or resume their assessment.`,
+    emailTo: (dirRec && dirRec.email) || undefined
+  });
   res.json({ ok: true, exceptions: found.exceptions });
 }));
 
@@ -495,15 +628,20 @@ hr.delete('/drafts/:id', wrap(async (req, res) => {
 }));
 
 hr.get('/submissions', wrap(async (req, res) => {
-  const [fw, cfg, cycles] = await Promise.all([store.getFramework(), store.getConfig(), store.listCycles()]);
+  const [cfg, cycles] = await Promise.all([store.getConfig(), store.listCycles()]);
+  const fwFor = makeFwResolver();
   const subs = await store.listSubmissions(req.query.cycleId || undefined);
-  res.json(subs.map(s => subSummary(s, fw, cfg, cycles)));
+  const out = [];
+  for (const s of subs) out.push(subSummary(s, await fwFor(s.cycleId), cfg, cycles));
+  res.json(out);
 }));
 
 hr.get('/submissions/:id', wrap(async (req, res) => {
   const sub = await store.getSubmission(req.params.id);
   if (!sub) return res.status(404).json({ error: 'Submission not found' });
-  const [fw, cfg, cycles] = await Promise.all([store.getFramework(), store.getConfig(), store.listCycles()]);
+  const [cfg, cycles] = await Promise.all([store.getConfig(), store.listCycles()]);
+  const fwFor = makeFwResolver();
+  const fw = await fwFor(sub.cycleId);
   const sc = computeScores(sub, fw, cfg);
 
   // ---- deep analysis: rank within cycle, domain comparison vs company, skill extremes, band gap ----
@@ -533,7 +671,7 @@ hr.get('/submissions/:id', wrap(async (req, res) => {
     scores: sc,
     weights: activeWeights(fw, cfg),
     bands: fw.bands,
-    history: await employeeHistory(sub.profile.employeeId, sub.id, fw, cfg, cycles),
+    history: await employeeHistory(sub.profile.employeeId, sub.id, fwFor, cfg, cycles),
     analysis: {
       rank, totalInCycle: cycleScored.length,
       percentile: cycleScored.length > 1 ? Math.round(((cycleScored.length - rank) / (cycleScored.length - 1)) * 100) : 100,
@@ -549,11 +687,14 @@ hr.get('/submissions/:id', wrap(async (req, res) => {
 hr.put('/submissions/:id', wrap(async (req, res) => {
   const sub = await store.getSubmission(req.params.id);
   if (!sub) return res.status(404).json({ error: 'Submission not found' });
-  const [fw, cfg] = await Promise.all([store.getFramework(), store.getConfig()]);
+  const cfg = await store.getConfig();
+  const fw = await makeFwResolver()(sub.cycleId);
   const { validations, finalize } = req.body || {};
   if (validations && typeof validations === 'object') {
+    const valid = new Set(allSkills(fw).map(sk => sk.id));
     for (const [skillId, v] of Object.entries(validations)) {
-      if (!sub.ratings[skillId] || !v || typeof v !== 'object') continue;
+      if (!valid.has(skillId) || !v || typeof v !== 'object') continue;
+      if (!sub.ratings[skillId]) sub.ratings[skillId] = { self: null, evidence: '' }; // skipped optional question — HR can still score it
       if (v.hr === '' || v.hr == null) sub.ratings[skillId].hr = null;
       else { const n = Math.round(Number(v.hr)); if (!isNaN(n) && n >= 0 && n <= 5) sub.ratings[skillId].hr = n; }
       if (v.remark != null) sub.ratings[skillId].remark = String(v.remark).trim().slice(0, 500);
@@ -564,6 +705,12 @@ hr.put('/submissions/:id', wrap(async (req, res) => {
     if (sc.validatedCount < sc.totalSkills) return res.status(400).json({ error: `Cannot finalize: ${sc.totalSkills - sc.validatedCount} skill(s) still unvalidated.` });
     sub.status = 'validated'; sub.validatedAt = new Date().toISOString();
     audit('submission.finalized', req, { sub: sub.id, employeeId: sub.profile.employeeId, band: sc.band });
+    const dirRec = await store.getEmployee(normalizeEmpId(sub.profile.employeeId));
+    notify('assessment.evaluated', {
+      title: `Evaluation completed: ${sub.profile.name}`,
+      body: `${sub.profile.name} (${sub.profile.employeeId}) has been evaluated. Weighted validated score ${sc.weightedValidated} — ${sc.band}.`,
+      emailTo: (dirRec && dirRec.email) || undefined
+    });
   } else audit('submission.validation-saved', req, { sub: sub.id });
   await store.replaceSubmission(sub.id, sub);
   res.json({ ok: true, scores: computeScores(sub, fw, cfg), status: sub.status });
@@ -620,10 +767,12 @@ hr.get('/analytics', wrap(async (req, res) => {
 }));
 
 // Full analytics dashboard: every metric, leaderboards, per-domain rankings, deep analysis
-hr.get('/dashboard', wrap(async (req, res) => {
+async function buildDashboardData(cycleId) {
   const [fw, cfg, cycles] = await Promise.all([store.getFramework(), store.getConfig(), store.listCycles()]);
-  const subs = await store.listSubmissions(req.query.cycleId || undefined);
-  const scored = subs.map(s => ({ s, sc: computeScores(s, fw, cfg) }));
+  const fwFor = makeFwResolver();
+  const subs = await store.listSubmissions(cycleId || undefined);
+  const scored = [];
+  for (const s of subs) scored.push({ s, sc: computeScores(s, await fwFor(s.cycleId), cfg) });
   const avg = a => a.length ? +(a.reduce((x, v) => x + v, 0) / a.length).toFixed(2) : null;
 
   // ---- per-person summary (rank score = validated when available, else self) ----
@@ -708,8 +857,8 @@ hr.get('/dashboard', wrap(async (req, res) => {
   const turnDays = scored.filter(({ s }) => s.validatedAt)
     .map(({ s }) => (new Date(s.validatedAt) - new Date(s.submittedAt)) / 86400000);
 
-  res.json({
-    cycleName: req.query.cycleId ? ((cycles.find(c => c.id === req.query.cycleId) || {}).name || '—') : 'All cycles',
+  return {
+    cycleName: cycleId ? ((cycles.find(c => c.id === cycleId) || {}).name || '—') : 'All cycles',
     totals: {
       submissions: subs.length,
       validated: subs.filter(s => s.status === 'validated').length,
@@ -725,15 +874,124 @@ hr.get('/dashboard', wrap(async (req, res) => {
     gaps: subs.length ? [...skillAvgs].sort((a, b) => a.avg - b.avg).slice(0, 10) : [],
     strengths: subs.length ? [...skillAvgs].sort((a, b) => b.avg - a.avg).slice(0, 10) : [],
     overClaim, underClaim
+  };
+}
+
+hr.get('/dashboard', wrap(async (req, res) => res.json(await buildDashboardData(req.query.cycleId))));
+
+// Executive summary PDF (management report for a cycle or all cycles)
+hr.get('/report.pdf', wrap(async (req, res) => {
+  const dash = await buildDashboardData(req.query.cycleId);
+  await reports.executiveSummary(res, { dash, cycleName: dash.cycleName });
+}));
+
+// Per-employee assessment report PDF
+hr.get('/submissions/:id/report.pdf', wrap(async (req, res) => {
+  const sub = await store.getSubmission(req.params.id);
+  if (!sub) return res.status(404).json({ error: 'Submission not found' });
+  const [cfg, cycles] = await Promise.all([store.getConfig(), store.listCycles()]);
+  const fwFor = makeFwResolver();
+  const fw = await fwFor(sub.cycleId);
+  await reports.employeeReport(res, {
+    sub, fw,
+    scores: computeScores(sub, fw, cfg),
+    cycleName: (cycles.find(c => c.id === sub.cycleId) || {}).name || '—',
+    history: await employeeHistory(sub.profile.employeeId, sub.id, fwFor, cfg, cycles)
   });
 }));
 
 hr.get('/audit', wrap(async (_req, res) => res.json(await store.listAudit(100))));
 
+// ---------------------------------------------------------------- notifications (in-app feed)
+hr.get('/notifications', wrap(async (_req, res) => {
+  const list = await store.listNotifications(50);
+  res.json({ notifications: list, unread: list.filter(n => !n.read).length });
+}));
+hr.post('/notifications/read', wrap(async (_req, res) => { await store.markNotificationsRead(); res.json({ ok: true }); }));
+
+// ---------------------------------------------------------------- employee directory
+hr.get('/employees', wrap(async (_req, res) => {
+  const employees = (await store.listEmployees()).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  res.json({
+    employees,
+    departments: [...new Set(employees.map(e => e.department).filter(Boolean))].sort(),
+    designations: [...new Set(employees.map(e => e.designation).filter(Boolean))].sort()
+  });
+}));
+
+function cleanEmployee(raw) {
+  const employeeId = String(raw.employeeId || '').trim().slice(0, 50);
+  if (!employeeId) return null;
+  return {
+    employeeId, employeeIdNorm: normalizeEmpId(employeeId),
+    name: String(raw.name || '').trim().slice(0, 100),
+    email: String(raw.email || '').trim().slice(0, 150),
+    department: String(raw.department || '').trim().slice(0, 80),
+    designation: String(raw.designation || '').trim().slice(0, 80),
+    manager: String(raw.manager || '').trim().slice(0, 50),
+    location: String(raw.location || '').trim().slice(0, 80),
+    doj: String(raw.doj || '').trim().slice(0, 10),
+    status: raw.status === 'inactive' ? 'inactive' : 'active',
+    updatedAt: new Date().toISOString()
+  };
+}
+
+hr.post('/employees', wrap(async (req, res) => {
+  const emp = cleanEmployee(req.body || {});
+  if (!emp) return res.status(400).json({ error: 'Employee ID is required.' });
+  if (!emp.name) return res.status(400).json({ error: 'Name is required.' });
+  await store.upsertEmployee(emp);
+  audit('employee.saved', req, { employeeId: emp.employeeId, status: emp.status });
+  res.json({ ok: true, employee: emp });
+}));
+
+hr.delete('/employees/:eid', wrap(async (req, res) => {
+  const eid = normalizeEmpId(decodeURIComponent(req.params.eid));
+  const existing = await store.getEmployee(eid);
+  if (!existing) return res.status(404).json({ error: 'Employee not found' });
+  await store.deleteEmployee(eid);
+  audit('employee.deleted', req, { employeeId: existing.employeeId });
+  res.json({ ok: true });
+}));
+
+// bulk onboarding via Excel/CSV — flexible header matching
+hr.post('/employees/import', express.raw({ type: () => true, limit: '10mb' }), wrap(async (req, res) => {
+  if (!Buffer.isBuffer(req.body) || req.body.length < 4) return res.status(400).json({ error: 'No file received' });
+  const XLSX = require('xlsx');
+  let rows;
+  try {
+    const wb = XLSX.read(req.body, { type: 'buffer' });
+    rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+  } catch { return res.status(400).json({ error: 'Could not read the file. Upload an Excel or CSV with a header row.' }); }
+  const pick = (row, ...names) => {
+    for (const k of Object.keys(row)) if (names.some(n => k.toLowerCase().replace(/[^a-z]/g, '').includes(n))) return row[k];
+    return '';
+  };
+  let imported = 0, skipped = 0;
+  for (const row of rows) {
+    const emp = cleanEmployee({
+      employeeId: pick(row, 'employeeid', 'empid', 'id'),
+      name: pick(row, 'name'),
+      email: pick(row, 'email', 'mail'),
+      department: pick(row, 'department', 'dept', 'function'),
+      designation: pick(row, 'designation', 'role', 'title'),
+      manager: pick(row, 'manager', 'reporting'),
+      location: pick(row, 'location', 'city', 'site'),
+      doj: String(pick(row, 'doj', 'joining', 'dateofjoining')).slice(0, 10),
+      status: String(pick(row, 'status')).toLowerCase().includes('inactive') ? 'inactive' : 'active'
+    });
+    if (emp && emp.name) { await store.upsertEmployee(emp); imported++; } else skipped++;
+  }
+  if (!imported) return res.status(422).json({ error: 'No employees could be read. The sheet needs at least "Employee ID" and "Name" columns.' });
+  audit('employee.bulk-import', req, { imported, skipped });
+  res.json({ ok: true, imported, skipped });
+}));
+
 hr.get('/submissions/:id/export.csv', wrap(async (req, res) => {
   const sub = await store.getSubmission(req.params.id);
   if (!sub) return res.status(404).json({ error: 'Submission not found' });
-  const [fw, cfg] = await Promise.all([store.getFramework(), store.getConfig()]);
+  const cfg = await store.getConfig();
+  const fw = await makeFwResolver()(sub.cycleId);
   const lines = [['S.No', 'Domain', 'Skill', 'Self Rating', 'Evidence', 'HR Validated', 'HR Remarks'].join(',')];
   for (const d of fw.domains) for (const sk of d.skills) {
     const r = sub.ratings[sk.id] || {};
@@ -750,12 +1008,13 @@ hr.get('/submissions/:id/export.csv', wrap(async (req, res) => {
 
 hr.get('/export.csv', wrap(async (req, res) => {
   const [fw, cfg, cycles] = await Promise.all([store.getFramework(), store.getConfig(), store.listCycles()]);
+  const fwFor = makeFwResolver();
   const subs = await store.listSubmissions(req.query.cycleId || undefined);
   const head = ['Employee', 'Employee ID', 'Department', 'Designation', 'Location', 'Cycle', 'Submitted', 'Status', 'Overall Self', 'Weighted Self', 'Overall Validated', 'Weighted Validated', 'Band',
     ...fw.domains.map(d => `${d.code} Self`), ...fw.domains.map(d => `${d.code} Validated`)];
   const lines = [head.join(',')];
   for (const s of subs) {
-    const sc = computeScores(s, fw, cfg);
+    const sc = computeScores(s, await fwFor(s.cycleId), cfg);
     const cycle = cycles.find(c => c.id === s.cycleId);
     lines.push([csvEsc(s.profile.name), csvEsc(s.profile.employeeId), csvEsc(s.profile.department), csvEsc(s.profile.designation), csvEsc(s.profile.location),
       csvEsc(cycle ? cycle.name : ''), s.submittedAt.slice(0, 10), s.status, sc.overallSelf, sc.weightedSelf, sc.overallValidated ?? '', sc.weightedValidated ?? '', csvEsc(sc.band ?? ''),
@@ -770,8 +1029,10 @@ hr.get('/export.csv', wrap(async (req, res) => {
 hr.get('/export.xlsx', wrap(async (req, res) => {
   const XLSX = require('xlsx');
   const [fw, cfg, cycles] = await Promise.all([store.getFramework(), store.getConfig(), store.listCycles()]);
+  const fwFor = makeFwResolver();
   const subs = await store.listSubmissions(req.query.cycleId || undefined);
-  const scored = subs.map(s => ({ s, sc: computeScores(s, fw, cfg) }));
+  const scored = [];
+  for (const s of subs) scored.push({ s, sc: computeScores(s, await fwFor(s.cycleId), cfg) });
   const cycName = id => (cycles.find(c => c.id === id) || {}).name || '—';
 
   const wb = XLSX.utils.book_new();
@@ -851,6 +1112,18 @@ admin.put('/framework', hrAuth, wrap(async (req, res) => {
       if (!sk.id) sk.id = 's' + newId();
       sk.name = String(sk.name).trim().slice(0, 200);
       sk.sno = sno++;
+      // question-type metadata (defaults preserve the master template exactly)
+      sk.type = ['rating', 'mcq', 'text'].includes(sk.type) ? sk.type : 'rating';
+      if (sk.type === 'rating') { delete sk.options; delete sk.correct; }
+      else if (sk.type === 'mcq') {
+        sk.options = (Array.isArray(sk.options) ? sk.options : []).map(o => String(o).trim().slice(0, 200)).filter(Boolean).slice(0, 10);
+        sk.correct = sk.correct != null && sk.correct !== '' && sk.options[Number(sk.correct)] ? Number(sk.correct) : null;
+      } else { delete sk.options; delete sk.correct; }
+      if (sk.required === false) sk.required = false; else delete sk.required;
+      const w = Number(sk.weight);
+      if (!isNaN(w) && w > 0 && w !== 1) sk.weight = Math.min(10, w); else delete sk.weight;
+      if (['basic', 'intermediate', 'advanced'].includes(sk.difficulty)) {} else delete sk.difficulty;
+      if (sk.type === 'rating') delete sk.type; // keep master template storage byte-identical
     }
   }
   fw.company = String(fw.company || '').trim().slice(0, 120);
@@ -1002,7 +1275,11 @@ function validateFramework(fw) {
   for (const [i, d] of fw.domains.entries()) {
     if (!d.name || !String(d.name).trim()) return `Category ${i + 1}: name is required`;
     if (!Array.isArray(d.skills)) return `Category "${d.name}": skills must be a list`;
-    for (const sk of d.skills) if (!sk.name || !String(sk.name).trim()) return `Category "${d.name}": every skill needs a name`;
+    for (const sk of d.skills) {
+      if (!sk.name || !String(sk.name).trim()) return `Category "${d.name}": every skill needs a name`;
+      if (sk.type === 'mcq' && (!Array.isArray(sk.options) || sk.options.filter(o => String(o).trim()).length < 2))
+        return `"${String(sk.name).slice(0, 50)}": MCQ questions need at least 2 options`;
+    }
     totalSkills += d.skills.length;
   }
   if (totalSkills === 0) return 'Add at least one skill';
@@ -1015,6 +1292,39 @@ function validateFramework(fw) {
 app.get('/assessment', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'assessment.html')));
 app.get('/hr', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'hr.html')));
 app.get('/admin', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
+app.get('/my', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'my.html')));
+
+// ---------------------------------------------------------------- deadline reminders
+// Checked at boot and every 6h: when the open cycle closes within 24h, remind
+// in-progress employees (email when the directory has their address) + HR.
+const remindedCycles = new Set();
+async function deadlineReminders() {
+  try {
+    const cycles = await store.listCycles();
+    const open = cycles.find(c => cycleIsLive(c));
+    if (!open || !open.closesAt || remindedCycles.has(open.id)) return;
+    const msLeft = Date.parse(open.closesAt) - Date.now();
+    if (msLeft <= 0 || msLeft > 24 * 3600e3) return;
+    remindedCycles.add(open.id);
+    const drafts = await store.listDrafts(open.id);
+    const hours = Math.round(msLeft / 3600e3);
+    notify('assessment.reminder', {
+      title: `Deadline in ~${hours}h: ${open.name}`,
+      body: `The assessment window closes in about ${hours} hours. ${drafts.length} employee(s) still have in-progress drafts.`,
+      emailTo: process.env.HR_NOTIFY_EMAIL
+    });
+    for (const d of drafts) {
+      const rec = await store.getEmployee(d.employeeId);
+      if (rec && rec.email) {
+        notify('assessment.reminder', {
+          title: `Reminder: complete your METNMAT assessment (~${hours}h left)`,
+          body: `Hi ${d.profile.name}, the ${open.name} assessment window closes in about ${hours} hours. Your progress is saved — return to the portal to finish and submit.`,
+          emailTo: rec.email
+        });
+      }
+    }
+  } catch (e) { console.error('Reminder check failed:', e.message); }
+}
 app.get('/healthz', (_req, res) => res.json({ ok: true, driver: store.driver }));
 
 app.use((req, res) => {
@@ -1076,6 +1386,8 @@ function start() {
     console.log(line);
   });
   if (store.driver === 'file') { backupDb(); setInterval(backupDb, 6 * 3600e3).unref(); }
+  ready.then(() => deadlineReminders());
+  setInterval(deadlineReminders, 6 * 3600e3).unref();
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { console.log(`\n${sig} — shutting down.`); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 3000).unref(); });
 }
 

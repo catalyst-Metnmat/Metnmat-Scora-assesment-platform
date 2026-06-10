@@ -125,8 +125,10 @@ async function renderList() {
       <div class="actions">
         <button class="btn small" id="cycleBtn">Manage cycles</button>
         <a class="btn secondary small" href="/admin">Assessment designer</a>
+        <button class="btn ghost small" id="employeesBtn">Employees</button>
         <button class="btn ghost small" id="weightsBtn">Domain weights</button>
         <button class="btn ghost small" id="auditBtn">Audit log</button>
+        <button class="btn ghost small" id="notifBtn">🔔 <span id="notifCount"></span></button>
         <button class="btn ghost small" id="lockBtn" title="Forget the key on this device">Lock</button>
       </div>
     </div>
@@ -179,6 +181,12 @@ async function renderList() {
   document.getElementById('weightsBtn').onclick = renderWeightsPanel;
   document.getElementById('auditBtn').onclick = renderAuditPanel;
   document.getElementById('analyticsBtn').onclick = renderDashboard;
+  document.getElementById('employeesBtn').onclick = renderEmployeesPanel;
+  document.getElementById('notifBtn').onclick = renderNotifPanel;
+  api('/api/hr/notifications').then(n => {
+    const el = document.getElementById('notifCount');
+    if (el && n.unread) el.textContent = n.unread;
+  }).catch(() => {});
   document.getElementById('exportAll').onclick = () =>
     downloadCsv('/api/hr/export.csv' + (currentCycleFilter ? `?cycleId=${currentCycleFilter}` : ''),
       `METNMAT_assessments_${currentCycleFilter ? cycName(currentCycleFilter).replace(/[^\w]+/g, '_') : 'all'}.csv`);
@@ -337,6 +345,115 @@ function renderCyclesPanel() {
     });
   });
 
+  document.getElementById('panel').scrollIntoView({ behavior: 'smooth' });
+}
+
+/* ================= employees panel ================= */
+async function renderEmployeesPanel() {
+  let data;
+  try { data = await api('/api/hr/employees'); } catch { return; }
+  const rows = data.employees.map(e => `
+    <tr>
+      <td><b>${esc(e.name)}</b><div class="muted">${esc(e.employeeId)}${e.email ? ' · ' + esc(e.email) : ''}</div></td>
+      <td>${esc(e.department || '—')}<div class="muted">${esc(e.designation || '')}</div></td>
+      <td>${esc(e.manager || '—')}</td>
+      <td>${esc(e.location || '—')}</td>
+      <td><span class="badge ${e.status === 'active' ? 'validated' : 'neutral'}">${e.status}</span></td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn ghost small" data-toggle="${esc(e.employeeId)}" data-st="${e.status}">${e.status === 'active' ? 'Deactivate' : 'Activate'}</button>
+        <button class="iconbtn danger" data-empdel="${esc(e.employeeId)}" title="Remove">✕</button>
+      </td>
+    </tr>`).join('') || '<tr><td colspan="6" class="empty">No employees onboarded yet — the portal is in open mode (anyone with the link can submit). Add employees to restrict access to registered staff only.</td></tr>';
+
+  document.getElementById('panel').innerHTML = `
+    <div class="card mt">
+      <h2>Employee directory <span class="muted" style="font-weight:400;font-size:13px">· ${data.employees.length} employees · ${data.departments.length} departments · ${data.designations.length} designations</span></h2>
+      <p class="muted" style="margin-bottom:12px">When the directory has employees, <b>only registered, active employees</b> can take assessments, and their identity fields come from the directory. Email addresses enable notifications. Bulk import: Excel/CSV with columns Employee ID, Name, Email, Department, Designation, Manager, Location, DOJ, Status.</p>
+      <div class="actions" style="margin-bottom:10px">
+        <button class="btn small" id="empAddBtn">+ Add employee</button>
+        <button class="btn secondary small" id="empImportBtn">Bulk import (Excel/CSV)</button>
+        <input type="file" id="empFile" accept=".xlsx,.xls,.csv" hidden>
+      </div>
+      <div id="empForm"></div>
+      <div style="overflow-x:auto"><table class="list">
+        <thead><tr><th>Employee</th><th>Department</th><th>Manager</th><th>Location</th><th>Status</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+      <div class="error-msg" id="empErr" hidden></div>
+    </div>`;
+
+  const panel = document.getElementById('panel');
+  const showErr = m => { const e = document.getElementById('empErr'); e.hidden = false; e.textContent = m; };
+
+  document.getElementById('empAddBtn').onclick = () => {
+    document.getElementById('empForm').innerHTML = `
+      <div class="card" style="background:var(--bg)">
+        <div class="grid2">
+          <div><label>Employee ID *</label><input id="fEid"></div>
+          <div><label>Full name *</label><input id="fName"></div>
+          <div><label>Email</label><input id="fEmail" type="text"></div>
+          <div><label>Department</label><input id="fDept"></div>
+          <div><label>Designation</label><input id="fDesg"></div>
+          <div><label>Reporting manager (ID or name)</label><input id="fMgr"></div>
+          <div><label>Location</label><input id="fLoc"></div>
+          <div><label>Date of joining</label><input id="fDoj" type="date"></div>
+        </div>
+        <div class="actions mt"><button class="btn small" id="fSave">Save employee</button>
+        <button class="btn ghost small" id="fCancel">Cancel</button></div>
+      </div>`;
+    document.getElementById('fCancel').onclick = () => { document.getElementById('empForm').innerHTML = ''; };
+    document.getElementById('fSave').onclick = async () => {
+      try {
+        await api('/api/hr/employees', { method: 'POST', body: JSON.stringify({
+          employeeId: document.getElementById('fEid').value, name: document.getElementById('fName').value,
+          email: document.getElementById('fEmail').value, department: document.getElementById('fDept').value,
+          designation: document.getElementById('fDesg').value, manager: document.getElementById('fMgr').value,
+          location: document.getElementById('fLoc').value, doj: document.getElementById('fDoj').value }) });
+        toast('Employee saved.'); renderEmployeesPanel();
+      } catch (e) { if (e.message !== 'forbidden') showErr(e.message); }
+    };
+  };
+
+  document.getElementById('empImportBtn').onclick = () => document.getElementById('empFile').click();
+  document.getElementById('empFile').addEventListener('change', async e => {
+    const file = e.target.files[0]; e.target.value = '';
+    if (!file) return;
+    try {
+      const res = await fetch('/api/hr/employees/import', { method: 'POST', headers: { 'X-HR-Key': hrKey, 'Content-Type': 'application/octet-stream' }, body: await file.arrayBuffer() });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || 'Import failed');
+      toast(`Imported ${j.imported} employee(s)${j.skipped ? ', skipped ' + j.skipped : ''}.`);
+      renderEmployeesPanel();
+    } catch (err) { showErr(err.message); }
+  });
+
+  panel.querySelectorAll('[data-toggle]').forEach(b => b.onclick = async () => {
+    const emp = data.employees.find(x => x.employeeId === b.dataset.toggle);
+    await api('/api/hr/employees', { method: 'POST', body: JSON.stringify({ ...emp, status: b.dataset.st === 'active' ? 'inactive' : 'active' }) });
+    toast('Status updated.'); renderEmployeesPanel();
+  });
+  panel.querySelectorAll('[data-empdel]').forEach(b => b.onclick = async () => {
+    if (!confirm(`Remove ${b.dataset.empdel} from the directory? (Their submissions are kept.)`)) return;
+    await api('/api/hr/employees/' + encodeURIComponent(b.dataset.empdel), { method: 'DELETE' });
+    toast('Employee removed.'); renderEmployeesPanel();
+  });
+  panel.scrollIntoView({ behavior: 'smooth' });
+}
+
+/* ================= notifications panel ================= */
+async function renderNotifPanel() {
+  const { notifications } = await api('/api/hr/notifications');
+  document.getElementById('panel').innerHTML = `
+    <div class="card mt">
+      <h2>Notifications <span class="muted" style="font-weight:400;font-size:13px">(in-app feed${notifications.some(n => n.emailed) ? ' · email active' : ' · set RESEND_API_KEY for email'})</span></h2>
+      ${notifications.length ? notifications.map(n => `
+        <div class="podium-row" style="${n.read ? 'opacity:.65' : ''}">
+          <span class="badge ${n.event.includes('submitted') ? 'validated' : n.event.includes('reminder') || n.event.includes('reopened') ? 'pending' : 'neutral'}">${esc(n.event.replace('assessment.', ''))}</span>
+          <div><b>${esc(n.title)}</b><div class="muted">${esc(n.body)}</div>
+          <div class="muted">${new Date(n.ts).toLocaleString('en-IN')}${n.emailed ? ' · ✉ emailed' : ''}</div></div>
+        </div>`).join('') : '<div class="empty">No notifications yet.</div>'}
+    </div>`;
+  await api('/api/hr/notifications/read', { method: 'POST' }).catch(() => {});
+  const c = document.getElementById('notifCount'); if (c) c.textContent = '';
   document.getElementById('panel').scrollIntoView({ behavior: 'smooth' });
 }
 
@@ -506,6 +623,7 @@ async function renderDashboard() {
   app.innerHTML = `
     <div class="actions" style="margin-bottom:14px">
       <button class="btn ghost small" id="backBtn">&larr; Submissions</button>
+      <button class="btn ghost small" id="execPdf">Executive summary PDF</button>
       <button class="btn ghost small" id="exportXlsxDash">Export Excel</button>
       <button class="btn ghost small" id="exportAll">Export CSV</button>
     </div>
@@ -569,6 +687,8 @@ async function renderDashboard() {
     downloadCsv('/api/hr/export.csv' + (currentCycleFilter ? `?cycleId=${currentCycleFilter}` : ''), 'METNMAT_assessments.csv');
   document.getElementById('exportXlsxDash').onclick = () =>
     downloadCsv('/api/hr/export.xlsx' + (currentCycleFilter ? `?cycleId=${currentCycleFilter}` : ''), 'METNMAT_assessment_data.xlsx');
+  document.getElementById('execPdf').onclick = () =>
+    downloadCsv('/api/hr/report.pdf' + (currentCycleFilter ? `?cycleId=${currentCycleFilter}` : ''), 'METNMAT_executive_summary.pdf');
   app.querySelectorAll('.tab').forEach(b => b.onclick = () => { currentCycleFilter = b.dataset.cyc; renderDashboard(); });
   app.querySelectorAll('tr.clickable, .podium-row.clickable').forEach(el => el.onclick = () => renderDetail(el.dataset.id));
   window.scrollTo(0, 0);
@@ -664,9 +784,10 @@ async function renderDetail(id) {
       return `
         <div class="hr-skill">
           <div><div class="sname">${sk.sno}. ${esc(sk.name)}</div>
+            ${r.answer !== undefined && r.answer !== null && r.answer !== '' ? `<div class="ev"><b>Answer:</b> ${esc(sk.options ? (sk.options[r.answer] ?? r.answer) : r.answer)}</div>` : ''}
             ${r.evidence ? `<div class="ev">Evidence: ${esc(r.evidence)}</div>` : ''}</div>
           <div style="display:flex;gap:8px;align-items:center">
-            <span class="self-pill" title="Self rating">${r.self}</span>
+            <span class="self-pill" title="Self rating">${r.self ?? '—'}</span>
             <select data-hr="${sk.id}" aria-label="HR validated rating for ${esc(sk.name)}">${opts}</select>
           </div>
           <input type="text" data-rm="${sk.id}" placeholder="HR remarks" maxlength="500" value="${esc(r.remark || '')}">
@@ -716,6 +837,7 @@ async function renderDetail(id) {
       <div class="actions">
         <button class="btn" id="saveBtn">Save validation</button>
         <button class="btn secondary" id="finalizeBtn">Save &amp; finalize (assign band)</button>
+        <button class="btn ghost" id="pdfBtn">PDF report</button>
         <button class="btn ghost" id="csvBtn">Export CSV</button>
         <button class="btn danger small" id="delBtn" style="margin-left:auto">Delete</button>
       </div>
@@ -724,6 +846,8 @@ async function renderDetail(id) {
 
   document.getElementById('backBtn').onclick = renderList;
   document.getElementById('printBtn').onclick = () => window.print();
+  document.getElementById('pdfBtn').onclick = () =>
+    downloadCsv(`/api/hr/submissions/${sub.id}/report.pdf`, `METNMAT_report_${(sub.profile.name || 'employee').replace(/[^\w]+/g, '_')}.pdf`);
   document.getElementById('csvBtn').onclick = () =>
     downloadCsv(`/api/hr/submissions/${sub.id}/export.csv`, `METNMAT_assessment_${(sub.profile.name || 'employee').replace(/[^\w]+/g, '_')}.csv`);
 

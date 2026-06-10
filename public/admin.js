@@ -239,6 +239,33 @@ function renderKeys(body) {
 function move(arr, i, dir) { const j = i + dir; if (j < 0 || j >= arr.length) return; [arr[i], arr[j]] = [arr[j], arr[i]]; }
 
 /* ===================== categories & skills ===================== */
+let expandedSkill = null; // "di:si" of the skill whose advanced settings are open
+
+function advRow(sk, di, si) {
+  const type = sk.type || 'rating';
+  return `
+    <div class="adv-row" data-advrow="${di}:${si}">
+      <label class="muted" style="margin:0">Type</label>
+      <select data-advk="type" data-pos="${di}:${si}">
+        ${['rating', 'mcq', 'text'].map(t => `<option value="${t}" ${type === t ? 'selected' : ''}>${t === 'rating' ? 'Rating 0–5' : t === 'mcq' ? 'MCQ' : 'Subjective'}</option>`).join('')}
+      </select>
+      <label class="agree-row" style="margin:0"><input type="checkbox" data-advk="required" data-pos="${di}:${si}" ${sk.required === false ? '' : 'checked'}> Mandatory</label>
+      <label class="muted" style="margin:0">Weight</label>
+      <input type="number" data-advk="weight" data-pos="${di}:${si}" value="${sk.weight || 1}" min="0.5" max="10" step="0.5" style="max-width:80px">
+      <label class="muted" style="margin:0">Difficulty</label>
+      <select data-advk="difficulty" data-pos="${di}:${si}">
+        ${['', 'basic', 'intermediate', 'advanced'].map(x => `<option value="${x}" ${(sk.difficulty || '') === x ? 'selected' : ''}>${x || '—'}</option>`).join('')}
+      </select>
+      ${type === 'mcq' ? `
+        <div style="grid-column:1/-1">
+          <label>Options (comma-separated)</label>
+          <input data-advk="options" data-pos="${di}:${si}" value="${esc((sk.options || []).join(', '))}" placeholder="Option A, Option B, Option C">
+          <label style="margin-top:8px">Correct option number for auto-scoring (1, 2, 3… — leave empty for HR-scored)</label>
+          <input type="number" data-advk="correct" data-pos="${di}:${si}" value="${sk.correct != null ? sk.correct + 1 : ''}" min="1" style="max-width:80px">
+        </div>` : ''}
+    </div>`;
+}
+
 function renderSkills(body) {
   body.innerHTML = FW.domains.map((d, di) => `
     <div class="card admin-domain">
@@ -259,10 +286,13 @@ function renderSkills(body) {
           <div class="admin-skill">
             <span class="sk-no">${si + 1}</span>
             <input data-d="${di}" data-s="${si}" value="${esc(sk.name)}" placeholder="Skill / competency" aria-label="Skill name">
+            ${(sk.type && sk.type !== 'rating') || sk.required === false || sk.weight ? `<span class="badge neutral" style="font-size:10px">${sk.type || 'rating'}${sk.required === false ? ' · optional' : ''}${sk.weight ? ' · w' + sk.weight : ''}</span>` : ''}
+            <button class="iconbtn ${expandedSkill === di + ':' + si ? 'on' : ''}" data-adv="${di}:${si}" title="Question settings (type, weight, difficulty)">⚙</button>
             <button class="iconbtn" data-smove="${di}:${si}" data-dir="-1" title="Move up">▲</button>
             <button class="iconbtn" data-smove="${di}:${si}" data-dir="1" title="Move down">▼</button>
             <button class="iconbtn danger" data-sdel="${di}:${si}" title="Delete skill">✕</button>
-          </div>`).join('')}
+          </div>
+          ${expandedSkill === di + ':' + si ? advRow(sk, di, si) : ''}`).join('')}
         <button class="btn ghost small" data-addskill="${di}">+ Add skill</button>
       </div>
     </div>`).join('') + `
@@ -270,6 +300,23 @@ function renderSkills(body) {
       <button class="btn small" id="addDomain">+ Add category</button>
       <span class="muted" id="wsum"></span>
     </div>`;
+
+  body.querySelectorAll('[data-adv]').forEach(b => b.onclick = () => {
+    expandedSkill = expandedSkill === b.dataset.adv ? null : b.dataset.adv;
+    renderTab();
+  });
+  body.querySelectorAll('[data-advk]').forEach(el => el.addEventListener(el.type === 'checkbox' || el.tagName === 'SELECT' ? 'change' : 'input', () => {
+    const [di, si] = el.dataset.pos.split(':').map(Number);
+    const sk = FW.domains[di].skills[si];
+    const k = el.dataset.advk;
+    if (k === 'type') { sk.type = el.value; if (el.value === 'mcq' && !sk.options) sk.options = []; markDirty(); renderTab(); return; }
+    if (k === 'required') sk.required = el.checked ? undefined : false;
+    if (k === 'weight') { const w = Number(el.value); sk.weight = !isNaN(w) && w > 0 && w !== 1 ? w : undefined; }
+    if (k === 'difficulty') sk.difficulty = el.value || undefined;
+    if (k === 'options') sk.options = el.value.split(',').map(s => s.trim()).filter(Boolean);
+    if (k === 'correct') { const c = Number(el.value); sk.correct = !isNaN(c) && c >= 1 ? c - 1 : null; }
+    markDirty();
+  }));
 
   const wsum = () => { document.getElementById('wsum').textContent = 'Total weight: ' + FW.domains.reduce((s, d) => s + (Number(d.weight) || 0), 0) + '%'; };
   wsum();

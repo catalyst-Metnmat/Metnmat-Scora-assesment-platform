@@ -644,6 +644,27 @@ table.matrix td:first-child { max-width: 180px; overflow: hidden; text-overflow:
 .save-status { font-size: 12px; color: var(--green); font-weight: 600; white-space: nowrap; }
 .save-status.err { color: var(--red); }
 
+/* MCQ options in the wizard */
+.choice {
+  display: flex; align-items: flex-start; gap: 10px;
+  border: 1.5px solid var(--line); border-radius: 10px;
+  padding: 11px 14px; margin-top: 8px; cursor: pointer;
+  font-size: 14.5px; font-weight: 400; color: var(--ink);
+  transition: border-color .15s, background .15s;
+}
+.choice:hover { border-color: var(--copper-light); background: #fdf3f3; }
+.choice.selected { border-color: var(--copper); background: var(--copper-pale); }
+.choice input { margin-top: 3px; accent-color: var(--copper); }
+
+/* per-question advanced settings (designer) */
+.adv-row {
+  display: grid; grid-template-columns: auto 130px auto auto 80px auto 140px; gap: 10px; align-items: center;
+  background: var(--bg); border: 1px dashed var(--line); border-radius: 10px;
+  padding: 12px 14px; margin: 2px 0 6px 30px;
+}
+@media (max-width: 760px) { .adv-row { grid-template-columns: auto 1fr; } }
+.iconbtn.on { background: var(--copper-pale); border-color: var(--copper); }
+
 /* ---------------- misc ---------------- */
 .toast {
   position: fixed; bottom: 26px; left: 50%;
