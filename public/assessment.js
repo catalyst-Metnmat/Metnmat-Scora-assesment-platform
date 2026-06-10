@@ -215,13 +215,15 @@ function renderProfile() {
 
       <div id="regForm" hidden>
         <h2 style="font-size:18px;margin-bottom:4px">Register</h2>
-        <p class="muted" style="margin-bottom:12px">All three fields are required. You'll get a 4-digit SCORA code — that's your password.</p>
+        <p class="muted" style="margin-bottom:12px">All fields are required. You'll get a 4-digit SCORA code — that's your password.</p>
         <label for="rName">Full name *</label>
         <input type="text" id="rName" autocomplete="name">
         <label for="rMobile" style="margin-top:10px">Mobile number *</label>
         <input type="text" id="rMobile" inputmode="tel" autocomplete="tel">
         <label for="rEmail" style="margin-top:10px">Email *</label>
         <input type="text" id="rEmail" inputmode="email" autocomplete="email">
+        <label for="rDoj" style="margin-top:10px">Joining month &amp; year *</label>
+        <input type="month" id="rDoj">
         <div class="error-msg" id="rErr" hidden></div>
         <div class="actions mt"><button class="btn" id="regBtn">Create my SCORA code</button></div>
         <p class="muted mt" style="text-align:center">Already have a code? <a href="#" id="toLogin">Back to log in</a></p>
@@ -250,10 +252,11 @@ function renderProfile() {
     const name = document.getElementById('rName').value.trim();
     const mobile = document.getElementById('rMobile').value.trim();
     const email = document.getElementById('rEmail').value.trim();
-    if (!name || !mobile || !email) { rErr.hidden = false; rErr.textContent = 'All three fields are required.'; return; }
+    const doj = document.getElementById('rDoj').value;
+    if (!name || !mobile || !email || !doj) { rErr.hidden = false; rErr.textContent = 'All fields are required.'; return; }
     const btn = document.getElementById('regBtn'); btn.disabled = true; btn.textContent = 'Creating…';
     try {
-      const r = await fetch('/api/employee/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, mobile, email }) });
+      const r = await fetch('/api/employee/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, mobile, email, doj }) });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'Registration failed.');
       showCode(j.code, j.name);

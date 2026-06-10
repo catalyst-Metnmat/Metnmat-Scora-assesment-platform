@@ -1108,7 +1108,7 @@ async function renderDetail(id) {
       </div>
     </div>`;
 
-  const profLabels = { name: 'Full name', employeeId: 'SCORA code', email: 'Email', mobile: 'Mobile', department: 'Department', designation: 'Designation', manager: 'Reporting manager', location: 'Location', doj: 'Date of joining' };
+  const profLabels = { name: 'Full name', employeeId: 'SCORA code', email: 'Email', mobile: 'Mobile', department: 'Department', designation: 'Designation', manager: 'Reporting manager', location: 'Location', doj: 'Joining (month/year)' };
   const profileRows = Object.entries(profLabels)
     .filter(([k]) => sub.profile[k] != null && sub.profile[k] !== '')
     .map(([k, label]) => `<tr><td style="color:var(--muted);width:240px">${esc(label)}</td><td><b>${esc(sub.profile[k])}</b></td></tr>`).join('')

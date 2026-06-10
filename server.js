@@ -376,14 +376,16 @@ app.post('/api/employee/register', submitLimit, wrap(async (req, res) => {
   const name = String((req.body || {}).name || '').trim().slice(0, 100);
   const mobile = String((req.body || {}).mobile || '').trim().slice(0, 25);
   const email = String((req.body || {}).email || '').trim().slice(0, 150);
+  const doj = String((req.body || {}).doj || '').trim().slice(0, 7); // "YYYY-MM"
   if (!name) return res.status(400).json({ error: 'Full name is required.' });
   if (!mobile || mobile.replace(/\D/g, '').length < 7) return res.status(400).json({ error: 'A valid mobile number is required.' });
   if (!emailValid(email)) return res.status(400).json({ error: 'A valid email address is required.' });
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(doj)) return res.status(400).json({ error: 'Your joining month and year are required.' });
   const emailNorm = email.toLowerCase();
   if (await store.getEmpAccountByEmail(emailNorm)) return res.status(409).json({ error: 'This email is already registered. Use your SCORA code to log in (or contact HR if you forgot it).' });
   const code = await generateScoraCode();
   if (!code) return res.status(507).json({ error: 'Unable to allocate a SCORA code. Contact HR.' });
-  const acc = { code, name, nameNorm: name.toLowerCase().replace(/\s+/g, ' '), email, emailNorm, mobile, createdAt: new Date().toISOString() };
+  const acc = { code, name, nameNorm: name.toLowerCase().replace(/\s+/g, ' '), email, emailNorm, mobile, doj, createdAt: new Date().toISOString() };
   await store.insertEmpAccount(acc);
   audit('employee.registered', req, { code, email });
   res.json({ ok: true, code, name });
@@ -452,7 +454,7 @@ app.post('/api/session/start', submitLimit, wrap(async (req, res) => {
   const cleanProfile = {
     name: acc.name, employeeId: acc.code, email: acc.email, mobile: acc.mobile,
     department: (dirRec && dirRec.department) || '', designation: (dirRec && dirRec.designation) || '',
-    manager: (dirRec && dirRec.manager) || '', location: (dirRec && dirRec.location) || '', doj: (dirRec && dirRec.doj) || ''
+    manager: (dirRec && dirRec.manager) || '', location: (dirRec && dirRec.location) || '', doj: acc.doj || (dirRec && dirRec.doj) || ''
   };
   let draft = await store.getDraftByEmployee(cycle.id, eid);
   if (draft) {
