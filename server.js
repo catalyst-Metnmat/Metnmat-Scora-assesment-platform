@@ -361,6 +361,44 @@ app.post('/api/auth/login', wrap(async (req, res) => {
   res.json({ ok: true, token, name: u.name, role: u.role, username: u.username });
 }));
 
+// ---------------------------------------------------------------- employee accounts (SCORA code)
+const emailValid = e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e || ''));
+async function generateScoraCode() {
+  for (let i = 0; i < 200; i++) {
+    const code = String(Math.floor(Math.random() * 10000)).padStart(4, '0'); // "0000".."9999"
+    if (!(await store.getEmpAccountByCode(code))) return code;
+  }
+  return null; // directory effectively full (>~10k employees)
+}
+
+// Register: Full Name + Mobile + Email (all mandatory, email unique) → 4-digit SCORA code (password)
+app.post('/api/employee/register', submitLimit, wrap(async (req, res) => {
+  const name = String((req.body || {}).name || '').trim().slice(0, 100);
+  const mobile = String((req.body || {}).mobile || '').trim().slice(0, 25);
+  const email = String((req.body || {}).email || '').trim().slice(0, 150);
+  if (!name) return res.status(400).json({ error: 'Full name is required.' });
+  if (!mobile || mobile.replace(/\D/g, '').length < 7) return res.status(400).json({ error: 'A valid mobile number is required.' });
+  if (!emailValid(email)) return res.status(400).json({ error: 'A valid email address is required.' });
+  const emailNorm = email.toLowerCase();
+  if (await store.getEmpAccountByEmail(emailNorm)) return res.status(409).json({ error: 'This email is already registered. Use your SCORA code to log in (or contact HR if you forgot it).' });
+  const code = await generateScoraCode();
+  if (!code) return res.status(507).json({ error: 'Unable to allocate a SCORA code. Contact HR.' });
+  const acc = { code, name, nameNorm: name.toLowerCase().replace(/\s+/g, ' '), email, emailNorm, mobile, createdAt: new Date().toISOString() };
+  await store.insertEmpAccount(acc);
+  audit('employee.registered', req, { code, email });
+  res.json({ ok: true, code, name });
+}));
+
+// Login: Name + 4-digit SCORA code (the code is globally unique and is the credential)
+app.post('/api/employee/login', submitLimit, wrap(async (req, res) => {
+  const name = String((req.body || {}).name || '').trim();
+  const code = String((req.body || {}).code || '').trim();
+  const acc = /^\d{4}$/.test(code) ? await store.getEmpAccountByCode(code) : null;
+  if (!acc || acc.nameNorm !== name.toLowerCase().replace(/\s+/g, ' '))
+    return res.status(403).json({ error: 'Name and SCORA code do not match. Check both, or register if you are new.' });
+  res.json({ ok: true, code: acc.code, name: acc.name, email: acc.email, mobile: acc.mobile });
+}));
+
 // ---------------------------------------------------------------- public API
 app.get('/api/skills', wrap(async (_req, res) => {
   const cycles = await store.listCycles();
@@ -383,45 +421,39 @@ app.get('/api/skills', wrap(async (_req, res) => {
 // accessible cycle; returns a session token used for autosave and submission.
 app.post('/api/session/start', submitLimit, wrap(async (req, res) => {
   const cycles = await store.listCycles();
-  const { profile } = req.body || {};
-  if (!profile || typeof profile !== 'object') return res.status(400).json({ error: 'Profile is required' });
-  const eid = normalizeEmpId(profile.employeeId);
-
-  // employee directory enforcement: when HR has onboarded employees, only
-  // registered ACTIVE employees may take the assessment
-  const directory = await store.listEmployees();
-  let dirRec = null;
-  if (directory.length) {
-    dirRec = directory.find(e => e.employeeIdNorm === eid);
-    if (!dirRec) return res.status(403).json({ error: 'This employee ID is not registered. Contact HR to be added to the employee directory.' });
-    if (dirRec.status === 'inactive') return res.status(403).json({ error: 'This employee record is inactive. Contact HR.' });
-  }
+  // identity is the employee's SCORA code (their account credential)
+  const code = String((req.body || {}).code || '').trim();
+  const acc = /^\d{4}$/.test(code) ? await store.getEmpAccountByCode(code) : null;
+  if (!acc) return res.status(403).json({ error: 'Invalid SCORA code. Please log in or register first.' });
+  const eid = code;
 
   const access = findAccessCycle(cycles, eid);
   if (!access) return res.status(423).json({ error: 'The assessment window is closed. Contact HR if you need an exception to be granted.' });
   const { cycle, mode } = access;
 
+  // enrich from the HR directory if this person was onboarded (matched by email)
+  const dirRec = (await store.listEmployees()).find(e => (e.email || '').toLowerCase() === acc.emailNorm) || null;
+
   // assignment targeting: when the cycle is assigned to specific departments or
   // employees, only they can take it (an HR exception always overrides)
   if (mode !== 'exception' && cycle.assign && ((cycle.assign.departments || []).length || (cycle.assign.employees || []).length)) {
-    const inEmployees = (cycle.assign.employees || []).some(e => normalizeEmpId(e) === eid);
-    const dept = String((dirRec && dirRec.department) || profile.department || '').trim().toLowerCase();
-    const inDepartments = (cycle.assign.departments || []).some(d => String(d).trim().toLowerCase() === dept);
+    const ids = [acc.code, acc.emailNorm, acc.nameNorm];
+    const inEmployees = (cycle.assign.employees || []).some(e => ids.includes(String(e).trim().toLowerCase()));
+    const dept = String((dirRec && dirRec.department) || '').trim().toLowerCase();
+    const inDepartments = dept && (cycle.assign.departments || []).some(d => String(d).trim().toLowerCase() === dept);
     if (!inEmployees && !inDepartments)
-      return res.status(403).json({ error: `This assessment (${cycle.name}) is assigned to specific departments/employees and your ID is not on the list. Contact HR if you believe this is a mistake.` });
-  }
-  const fw = await makeFwResolver()(cycle.id);
-  for (const f of fw.profileFields.filter(f => f.required)) {
-    if ((dirRec && dirRec[f.id]) || (profile[f.id] && String(profile[f.id]).trim())) continue;
-    return res.status(400).json({ error: `${f.label} is required` });
+      return res.status(403).json({ error: `This assessment (${cycle.name}) is assigned to specific departments/employees and you are not on the list. Contact HR if you believe this is a mistake.` });
   }
 
   const existingSub = (await store.listSubmissions(cycle.id)).find(s => normalizeEmpId(s.profile.employeeId) === eid);
-  if (existingSub) return res.status(409).json({ error: `An assessment for employee ID "${String(profile.employeeId).trim()}" is already submitted in ${cycle.name}. Contact HR if it needs to be redone.` });
+  if (existingSub) return res.status(409).json({ error: `An assessment for SCORA code ${code} is already submitted in ${cycle.name}. Contact HR if it needs to be redone.` });
 
-  // directory record wins for identity fields (consistent reporting)
-  const cleanProfile = Object.fromEntries(fw.profileFields.map(f =>
-    [f.id, String((dirRec && dirRec[f.id]) || profile[f.id] || '').trim().slice(0, 300)]));
+  // profile = the 3 registered fields + SCORA code, enriched with directory role data
+  const cleanProfile = {
+    name: acc.name, employeeId: acc.code, email: acc.email, mobile: acc.mobile,
+    department: (dirRec && dirRec.department) || '', designation: (dirRec && dirRec.designation) || '',
+    manager: (dirRec && dirRec.manager) || '', location: (dirRec && dirRec.location) || '', doj: (dirRec && dirRec.doj) || ''
+  };
   let draft = await store.getDraftByEmployee(cycle.id, eid);
   if (draft) {
     draft.profile = cleanProfile;
@@ -432,7 +464,7 @@ app.post('/api/session/start', submitLimit, wrap(async (req, res) => {
       profile: cleanProfile, ratings: {}, step: 0,
       startedAt: new Date().toISOString(), updatedAt: new Date().toISOString()
     };
-    audit('session.started', req, { employeeId: profile.employeeId, cycle: cycle.name, mode });
+    audit('session.started', req, { employeeId: acc.code, cycle: cycle.name, mode });
   }
   await store.upsertDraft(draft);
   res.json({
@@ -502,9 +534,7 @@ async function saveSession(req, res) {
     }
   }
   if (step != null && !isNaN(Number(step))) draft.step = Math.max(0, Math.round(Number(step)));
-  if (profile && typeof profile === 'object') {
-    draft.profile = Object.fromEntries(fw.profileFields.map(f => [f.id, String(profile[f.id] ?? draft.profile[f.id] ?? '').trim().slice(0, 300)]));
-  }
+  // profile is fixed from the employee's SCORA account at session start — not editable mid-assessment
   draft.updatedAt = new Date().toISOString();
   await store.upsertDraft(draft);
   res.json({ ok: true, savedAt: draft.updatedAt });
@@ -569,16 +599,16 @@ app.post('/api/submissions', submitLimit, wrap(async (req, res) => {
 }));
 
 // ---------------------------------------------------------------- employee self-service (/my)
-// Identity check without accounts: employee ID + date of joining must match.
+// Identity check: the employee's name + 4-digit SCORA code (same as the assessment login).
 app.post('/api/me', submitLimit, wrap(async (req, res) => {
-  const { employeeId, doj } = req.body || {};
-  const eid = normalizeEmpId(employeeId);
-  if (!eid || !doj) return res.status(400).json({ error: 'Employee ID and date of joining are required.' });
-  const dirRec = await store.getEmployee(eid);
+  const name = String((req.body || {}).name || '').trim();
+  const code = String((req.body || {}).code || '').trim();
+  const acc = /^\d{4}$/.test(code) ? await store.getEmpAccountByCode(code) : null;
+  if (!acc || acc.nameNorm !== name.toLowerCase().replace(/\s+/g, ' '))
+    return res.status(403).json({ error: 'Name and SCORA code do not match our records.' });
+  const eid = acc.code;
   const subs = (await store.listSubmissions()).filter(s => normalizeEmpId(s.profile.employeeId) === eid);
-  const knownDoj = (dirRec && dirRec.doj) || (subs.length ? subs[subs.length - 1].profile.doj : null);
-  if (!knownDoj) return res.status(404).json({ error: 'No records found for this employee ID.' });
-  if (String(knownDoj).slice(0, 10) !== String(doj).slice(0, 10)) return res.status(403).json({ error: 'The date of joining does not match our records.' });
+  if (!subs.length) return res.status(404).json({ error: 'No assessment records found yet for your account.' });
 
   const [cfg, cycles] = await Promise.all([store.getConfig(), store.listCycles()]);
   const fwFor = makeFwResolver();
@@ -1061,6 +1091,21 @@ hr.get('/submissions/:id/report.pdf', wrap(async (req, res) => {
 hr.get('/audit', wrap(async (_req, res) => res.json(await store.listAudit(100))));
 
 // ---------------------------------------------------------------- employee directory
+// self-registered employee accounts (SCORA-code logins) — HR can view/remove
+hr.get('/empaccounts', wrap(async (_req, res) => {
+  const accounts = (await store.listEmpAccounts())
+    .map(({ nameNorm, emailNorm, ...a }) => a)
+    .sort((p, q) => (p.name || '').localeCompare(q.name || ''));
+  res.json({ accounts });
+}));
+hr.delete('/empaccounts/:code', wrap(async (req, res) => {
+  const a = await store.getEmpAccountByCode(String(req.params.code));
+  if (!a) return res.status(404).json({ error: 'Account not found' });
+  await store.deleteEmpAccount(a.code);
+  audit('employee.account-deleted', req, { code: a.code, email: a.email });
+  res.json({ ok: true });
+}));
+
 hr.get('/employees', wrap(async (_req, res) => {
   const employees = (await store.listEmployees()).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   res.json({

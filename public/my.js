@@ -8,28 +8,29 @@ const fmtDate = iso => iso ? new Date(iso).toLocaleDateString('en-IN', { day: 'n
 function renderGate(msg) {
   app.innerHTML = `
     <div class="card login-card">
-      <h2>My Results</h2>
-      <p class="muted" style="margin-bottom:14px">View your own assessment history, scores and skill profile. Verify your identity with your employee ID and date of joining.</p>
-      <label for="eid">Employee ID</label>
-      <input type="text" id="eid" autocomplete="off">
-      <label for="doj" style="margin-top:12px">Date of joining</label>
-      <input type="date" id="doj">
+      <div class="login-brand"><span class="wm"><span class="wm-red">SC</span><span class="wm-dark">ORA</span></span>
+        <div class="muted" style="font-size:12px;letter-spacing:1.5px;text-transform:uppercase">My Results</div></div>
+      <p class="muted" style="margin-bottom:14px">View your own assessment history, scores and skill profile. Log in with your name and 4-digit SCORA code.</p>
+      <label for="mName">Full name</label>
+      <input type="text" id="mName" autocomplete="name">
+      <label for="mCode" style="margin-top:10px">SCORA code (4 digits)</label>
+      <input type="text" id="mCode" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="••••">
       ${msg ? `<div class="error-msg">${esc(msg)}</div>` : ''}
       <div class="actions mt"><button class="btn" id="go">View my results</button></div>
     </div>`;
   const go = async () => {
-    const eid = document.getElementById('eid').value.trim();
-    const doj = document.getElementById('doj').value;
-    if (!eid || !doj) return renderGate('Please fill both fields.');
+    const name = document.getElementById('mName').value.trim();
+    const code = document.getElementById('mCode').value.trim();
+    if (!name || !/^\d{4}$/.test(code)) return renderGate('Enter your name and 4-digit SCORA code.');
     try {
-      const res = await fetch('/api/me', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ employeeId: eid, doj }) });
+      const res = await fetch('/api/me', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, code }) });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || 'Could not load your results.');
       renderMe(j);
     } catch (e) { renderGate(e.message); }
   };
   document.getElementById('go').onclick = go;
-  document.getElementById('doj').addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+  document.getElementById('mCode').addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
 }
 
 function renderMe(me) {

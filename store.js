@@ -46,6 +46,7 @@ function fileDriver() {
   if (!Array.isArray(db.drafts)) db.drafts = [];
   if (!Array.isArray(db.employees)) db.employees = [];
   if (!Array.isArray(db.users)) db.users = [];
+  if (!Array.isArray(db.empAccounts)) db.empAccounts = [];
   if (!db.frameworkSnapshots || typeof db.frameworkSnapshots !== 'object') db.frameworkSnapshots = {};
 
   let framework = loadJson(FW_FILE, null);
@@ -121,6 +122,12 @@ function fileDriver() {
     async getUser(username) { const u = (db.users || []).find(x => x.username === username); return u ? JSON.parse(JSON.stringify(u)) : null; },
     async upsertUser(user) { if (!db.users) db.users = []; const i = db.users.findIndex(x => x.username === user.username); if (i >= 0) db.users[i] = { ...db.users[i], ...user }; else db.users.push(user); saveDb(); },
     async deleteUser(username) { if (!db.users) return; const i = db.users.findIndex(x => x.username === username); if (i >= 0) db.users.splice(i, 1); saveDb(); },
+    // ---- self-registered employee accounts (SCORA code login) ----
+    async listEmpAccounts() { return (db.empAccounts || []).map(a => JSON.parse(JSON.stringify(a))); },
+    async getEmpAccountByCode(code) { const a = (db.empAccounts || []).find(x => x.code === code); return a ? JSON.parse(JSON.stringify(a)) : null; },
+    async getEmpAccountByEmail(emailNorm) { const a = (db.empAccounts || []).find(x => x.emailNorm === emailNorm); return a ? JSON.parse(JSON.stringify(a)) : null; },
+    async insertEmpAccount(acc) { if (!db.empAccounts) db.empAccounts = []; db.empAccounts.push(acc); saveDb(); },
+    async deleteEmpAccount(code) { if (!db.empAccounts) return; const i = db.empAccounts.findIndex(x => x.code === code); if (i >= 0) db.empAccounts.splice(i, 1); saveDb(); },
     _backupTarget() { return { db, dir: DATA_DIR }; }
   };
 }
@@ -163,6 +170,8 @@ function mongoDriver(uri) {
       await (await col('drafts')).createIndex({ cycleId: 1, employeeId: 1 });
       await (await col('employees')).createIndex({ employeeIdNorm: 1 }, { unique: true });
       await (await col('users')).createIndex({ username: 1 }, { unique: true });
+      await (await col('empAccounts')).createIndex({ code: 1 }, { unique: true });
+      await (await col('empAccounts')).createIndex({ emailNorm: 1 }, { unique: true });
     },
     async getSecrets() {
       const meta = await col('meta');
@@ -222,6 +231,12 @@ function mongoDriver(uri) {
     async getUser(username) { const u = await (await col('users')).findOne({ username }); if (!u) return null; const { _id, ...rest } = u; return rest; },
     async upsertUser(user) { await (await col('users')).updateOne({ username: user.username }, { $set: user }, { upsert: true }); },
     async deleteUser(username) { await (await col('users')).deleteOne({ username }); },
+    // ---- self-registered employee accounts (SCORA code login) ----
+    async listEmpAccounts() { return (await (await col('empAccounts')).find({}).toArray()).map(({ _id, ...a }) => a); },
+    async getEmpAccountByCode(code) { const a = await (await col('empAccounts')).findOne({ code }); if (!a) return null; const { _id, ...rest } = a; return rest; },
+    async getEmpAccountByEmail(emailNorm) { const a = await (await col('empAccounts')).findOne({ emailNorm }); if (!a) return null; const { _id, ...rest } = a; return rest; },
+    async insertEmpAccount(acc) { await (await col('empAccounts')).insertOne({ _id: acc.code, ...acc }); },
+    async deleteEmpAccount(code) { await (await col('empAccounts')).deleteOne({ code }); },
     _backupTarget() { return null; } // Mongo data is durable; no local file backup
   };
 }

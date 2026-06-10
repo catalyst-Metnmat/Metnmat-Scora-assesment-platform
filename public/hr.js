@@ -1108,8 +1108,11 @@ async function renderDetail(id) {
       </div>
     </div>`;
 
-  const profileRows = SKILLS.profileFields.map(f =>
-    `<tr><td style="color:var(--muted);width:240px">${esc(f.label)}</td><td><b>${esc(sub.profile[f.id] || '—')}</b></td></tr>`).join('');
+  const profLabels = { name: 'Full name', employeeId: 'SCORA code', email: 'Email', mobile: 'Mobile', department: 'Department', designation: 'Designation', manager: 'Reporting manager', location: 'Location', doj: 'Date of joining' };
+  const profileRows = Object.entries(profLabels)
+    .filter(([k]) => sub.profile[k] != null && sub.profile[k] !== '')
+    .map(([k, label]) => `<tr><td style="color:var(--muted);width:240px">${esc(label)}</td><td><b>${esc(sub.profile[k])}</b></td></tr>`).join('')
+    || '<tr><td class="muted">No profile data.</td></tr>';
 
   const historyBlock = history.length ? `
     <details class="domain-block"><summary>Previous cycles — year-over-year (${history.length})</summary>

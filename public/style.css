@@ -515,6 +515,14 @@ body.embed main.wrap { padding-top: 10px; padding-bottom: 24px; }
 .login-brand { text-align: center; margin-bottom: 22px; }
 .login-brand .wm { font-family: "Cinzel", serif; font-weight: 700; font-size: 30px; letter-spacing: 3px; display: block; }
 
+/* generated SCORA code display */
+.scora-code {
+  font-family: var(--font-head); font-weight: 800; font-size: 46px; letter-spacing: 12px;
+  color: var(--navy-900); background: var(--copper-pale);
+  border: 2px dashed var(--copper); border-radius: 14px;
+  padding: 18px 10px 18px 22px; margin: 6px auto 4px; display: inline-block; min-width: 200px;
+}
+
 /* org / reporting hierarchy tree */
 .org-tree, .org-tree ul { list-style: none; margin: 0; padding-left: 0; }
 .org-tree ul { padding-left: 22px; border-left: 2px solid var(--line); margin-left: 9px; margin-top: 4px; }

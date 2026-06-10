@@ -176,78 +176,115 @@ function progressShell(inner) {
     </div>${inner}`;
 }
 
-/* ---------------- profile step ---------------- */
+/* ---------------- entry: register / log in with SCORA code ---------------- */
+async function startSession(code) {
+  const res = await fetch('/api/session/start', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code })
+  });
+  const j = await res.json();
+  if (!res.ok) throw new Error(j.error || 'Could not start the assessment.');
+  TOKEN = j.token;
+  localStorage.setItem(TOKEN_KEY, TOKEN);
+  CYCLE = j.cycle; DEADLINE = j.deadlineAt || null;
+  state.profile = j.draft.profile || {};
+  state.ratings = j.draft.ratings || {};
+  state.step = j.resumed ? (j.draft.step ?? 0) : 0;
+  if (j.resumed) toast('Welcome back — your earlier progress was restored.');
+  else if (CYCLE.durationMinutes) toast(`You have ${CYCLE.durationMinutes} minutes to complete the assessment once you begin.`);
+  if (CYCLE.mode === 'exception') toast('Exception access granted by HR — you can complete your assessment now.');
+  render(); window.scrollTo(0, 0);
+}
+
 function renderProfile() {
-  const windowNote = !CYCLE && DATA.cycle && !DATA.cycle.isLive
-    ? `<div class="card" style="border-left:4px solid var(--amber)"><b>The assessment window is not currently open.</b>
-       <div class="muted" style="margin-top:4px">If HR granted you an exception, enter your details below and continue — your access will be checked automatically.</div></div>`
-    : !CYCLE && !DATA.cycle
-    ? `<div class="card" style="border-left:4px solid var(--amber)"><b>No assessment cycle is announced right now.</b>
-       <div class="muted" style="margin-top:4px">Continue only if HR granted you an exception for a previous cycle.</div></div>` : '';
+  app.innerHTML = `
+    <div class="card login-card">
+      <div class="login-brand"><span class="wm"><span class="wm-red">SC</span><span class="wm-dark">ORA</span></span>
+        <div class="muted" style="font-size:12px;letter-spacing:1.5px;text-transform:uppercase">Employee Assessment</div></div>
 
-  const fields = DATA.profileFields.map(f => {
-    const v = esc(state.profile[f.id] || '');
-    let input;
-    if (f.options) {
-      input = `<select data-pf="${f.id}"><option value="">Select…</option>${f.options.map(o =>
-        `<option ${state.profile[f.id] === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
-    } else if (f.type === 'textarea') {
-      input = `<textarea data-pf="${f.id}">${v}</textarea>`;
-    } else {
-      input = `<input type="${f.type || 'text'}" data-pf="${f.id}" value="${v}" maxlength="300">`;
-    }
-    return `<div class="${f.type === 'textarea' ? 'full' : ''}"><label>${esc(f.label)}${f.required ? ' *' : ''}</label>${input}</div>`;
-  }).join('');
+      <div id="loginForm">
+        <h2 style="font-size:18px;margin-bottom:4px">Log in</h2>
+        <p class="muted" style="margin-bottom:12px">Enter your name and your 4-digit SCORA code.</p>
+        <label for="lName">Full name</label>
+        <input type="text" id="lName" autocomplete="name">
+        <label for="lCode" style="margin-top:10px">SCORA code (4 digits)</label>
+        <input type="text" id="lCode" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="••••">
+        <div class="error-msg" id="lErr" hidden></div>
+        <div class="actions mt"><button class="btn" id="loginBtn">Log in &amp; start</button></div>
+        <p class="muted mt" style="text-align:center">First time here? <a href="#" id="toReg">Register to get your SCORA code</a></p>
+      </div>
 
-  app.innerHTML = progressShell(`
-    <h1>Employee Profile</h1>
-    <p class="sub">${CYCLE ? `Cycle: <b>${esc(CYCLE.name)}</b>. ` : ''}Fill every field — the HR team uses this to match the assessment to the right role. Your progress is saved on the server, so you can continue later from any point.</p>
-    ${windowNote}
-    <div class="card"><div class="grid2">${fields}</div>
-      <div class="error-msg" id="err" hidden></div>
-    </div>
-    <div class="wiz-nav"><span></span><button class="btn" id="next">Continue to Skills &rarr;</button></div>
-  `);
-  startCountdown();
+      <div id="regForm" hidden>
+        <h2 style="font-size:18px;margin-bottom:4px">Register</h2>
+        <p class="muted" style="margin-bottom:12px">All three fields are required. You'll get a 4-digit SCORA code — that's your password.</p>
+        <label for="rName">Full name *</label>
+        <input type="text" id="rName" autocomplete="name">
+        <label for="rMobile" style="margin-top:10px">Mobile number *</label>
+        <input type="text" id="rMobile" inputmode="tel" autocomplete="tel">
+        <label for="rEmail" style="margin-top:10px">Email *</label>
+        <input type="text" id="rEmail" inputmode="email" autocomplete="email">
+        <div class="error-msg" id="rErr" hidden></div>
+        <div class="actions mt"><button class="btn" id="regBtn">Create my SCORA code</button></div>
+        <p class="muted mt" style="text-align:center">Already have a code? <a href="#" id="toLogin">Back to log in</a></p>
+      </div>
+    </div>`;
 
-  app.querySelectorAll('[data-pf]').forEach(el => el.addEventListener('input', () => {
-    state.profile[el.dataset.pf] = el.value;
-  }));
-  document.getElementById('next').onclick = async () => {
-    const err = document.getElementById('err');
-    err.hidden = true;
-    const missing = DATA.profileFields.filter(f => f.required && !(state.profile[f.id] || '').trim());
-    if (missing.length) { err.hidden = false; err.textContent = 'Please fill: ' + missing.map(f => f.label).join(', '); return; }
-    const btn = document.getElementById('next');
-    btn.disabled = true; btn.textContent = 'Starting…';
+  const show = which => { document.getElementById('loginForm').hidden = which !== 'login'; document.getElementById('regForm').hidden = which !== 'reg'; };
+  document.getElementById('toReg').onclick = e => { e.preventDefault(); show('reg'); document.getElementById('rName').focus(); };
+  document.getElementById('toLogin').onclick = e => { e.preventDefault(); show('login'); document.getElementById('lName').focus(); };
+
+  const login = async () => {
+    const lErr = document.getElementById('lErr'); lErr.hidden = true;
+    const name = document.getElementById('lName').value.trim();
+    const code = document.getElementById('lCode').value.trim();
+    if (!name || !/^\d{4}$/.test(code)) { lErr.hidden = false; lErr.textContent = 'Enter your name and your 4-digit SCORA code.'; return; }
+    const btn = document.getElementById('loginBtn'); btn.disabled = true; btn.textContent = 'Logging in…';
     try {
-      if (!TOKEN) {
-        const res = await fetch('/api/session/start', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ profile: state.profile })
-        });
-        const j = await res.json();
-        if (!res.ok) throw new Error(j.error || 'Could not start the assessment.');
-        TOKEN = j.token;
-        localStorage.setItem(TOKEN_KEY, TOKEN);
-        CYCLE = j.cycle; DEADLINE = j.deadlineAt || null;
-        state.ratings = j.draft.ratings || {};
-        state.step = j.resumed ? (j.draft.step ?? 0) : 0;
-        if (j.resumed) toast('Welcome back — your earlier progress was restored.');
-        else if (CYCLE.durationMinutes) toast(`You have ${CYCLE.durationMinutes} minutes to complete this assessment once you begin.`);
-        if (CYCLE.mode === 'exception') toast('Exception access granted by HR — you can complete your assessment now.');
-      } else {
-        state.step = 0;
-        queueSave({ profile: true });
-        await flushSave({ profile: true });
-      }
-      render(); window.scrollTo(0, 0);
-    } catch (e) {
-      err.hidden = false; err.textContent = e.message;
-      btn.disabled = false; btn.textContent = 'Continue to Skills →';
-    }
+      const r = await fetch('/api/employee/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, code }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Login failed.');
+      await startSession(j.code);
+    } catch (e) { lErr.hidden = false; lErr.textContent = e.message; btn.disabled = false; btn.textContent = 'Log in & start'; }
   };
-  bindDots();
+  const register = async () => {
+    const rErr = document.getElementById('rErr'); rErr.hidden = true;
+    const name = document.getElementById('rName').value.trim();
+    const mobile = document.getElementById('rMobile').value.trim();
+    const email = document.getElementById('rEmail').value.trim();
+    if (!name || !mobile || !email) { rErr.hidden = false; rErr.textContent = 'All three fields are required.'; return; }
+    const btn = document.getElementById('regBtn'); btn.disabled = true; btn.textContent = 'Creating…';
+    try {
+      const r = await fetch('/api/employee/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, mobile, email }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Registration failed.');
+      showCode(j.code, j.name);
+    } catch (e) { rErr.hidden = false; rErr.textContent = e.message; btn.disabled = false; btn.textContent = 'Create my SCORA code'; }
+  };
+  document.getElementById('loginBtn').onclick = login;
+  document.getElementById('regBtn').onclick = register;
+  document.getElementById('lCode').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+  document.getElementById('rEmail').addEventListener('keydown', e => { if (e.key === 'Enter') register(); });
+
+  // after registration, show the generated SCORA code once, then continue
+  function showCode(code, name) {
+    app.innerHTML = `
+      <div class="card login-card" style="text-align:center">
+        <div class="login-brand"><span class="wm"><span class="wm-red">SC</span><span class="wm-dark">ORA</span></span></div>
+        <h2 style="font-size:18px">Welcome, ${esc(name)}</h2>
+        <p class="muted" style="margin-bottom:14px">This is your SCORA code — it is your <b>password</b>. Save it; you'll need it to log in and to view your results later.</p>
+        <div class="scora-code">${esc(code)}</div>
+        <div class="actions mt" style="justify-content:center">
+          <button class="btn ghost small" id="copyCode">Copy code</button>
+          <button class="btn" id="startNow">Start assessment &rarr;</button>
+        </div>
+        <div class="error-msg" id="sErr" hidden></div>
+      </div>`;
+    document.getElementById('copyCode').onclick = () => { navigator.clipboard.writeText(code); toast('SCORA code copied.'); };
+    document.getElementById('startNow').onclick = async () => {
+      const btn = document.getElementById('startNow'); btn.disabled = true; btn.textContent = 'Starting…';
+      try { await startSession(code); }
+      catch (e) { const s = document.getElementById('sErr'); s.hidden = false; s.textContent = e.message; btn.disabled = false; btn.textContent = 'Start assessment →'; }
+    };
+  }
 }
 
 /* ---------------- domain step ---------------- */
