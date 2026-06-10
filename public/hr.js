@@ -1,12 +1,30 @@
-/* HR dashboard: key gate -> cycles + submissions + analytics -> validation detail.
- * The access key is sent via the X-HR-Key header (never in URLs). */
+/* SCORA — HR & Director dashboard.
+ * Auth is dual-mode: a named-user bearer token OR a shared role key.
+ * Credentials live in `scora-auth` ({mode:'token'|'key', value, name, role}). */
 const app = document.getElementById('app');
-const KEY_STORE = 'metnmat-hr-key';
-let hrKey = sessionStorage.getItem(KEY_STORE) || localStorage.getItem(KEY_STORE) || '';
-let ROLE = 'hr';            // 'admin' = Director (sees the extra overview)
+const AUTH_STORE = 'scora-auth';
+let AUTH = loadAuth();
+let ROLE = AUTH ? AUTH.role : 'hr';   // 'admin' = Director (sees the extra overview)
 let SKILLS = null;          // framework cache
 let CYCLES = [];
 let currentCycleFilter = ''; // '' = all
+
+function loadAuth() {
+  try { return JSON.parse(sessionStorage.getItem(AUTH_STORE) || localStorage.getItem(AUTH_STORE) || 'null'); }
+  catch { return null; }
+}
+function saveAuth(auth, remember) {
+  AUTH = auth; ROLE = auth.role;
+  (remember ? localStorage : sessionStorage).setItem(AUTH_STORE, JSON.stringify(auth));
+}
+function clearAuth() {
+  AUTH = null;
+  sessionStorage.removeItem(AUTH_STORE); localStorage.removeItem(AUTH_STORE);
+}
+function authHeaders() {
+  if (!AUTH) return {};
+  return AUTH.mode === 'token' ? { Authorization: 'Bearer ' + AUTH.value } : { 'X-HR-Key': AUTH.value };
+}
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtDate = iso => iso ? new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
@@ -21,11 +39,11 @@ function toast(msg) {
 async function api(path, opts = {}) {
   const res = await fetch(path, {
     ...opts,
-    headers: { 'Content-Type': 'application/json', 'X-HR-Key': hrKey, ...(opts.headers || {}) }
+    headers: { 'Content-Type': 'application/json', ...authHeaders(), ...(opts.headers || {}) }
   });
-  if (res.status === 403) {
-    sessionStorage.removeItem(KEY_STORE); localStorage.removeItem(KEY_STORE); hrKey = '';
-    renderLogin('Invalid access key.');
+  if (res.status === 401 || res.status === 403) {
+    clearAuth();
+    renderLogin(res.status === 401 ? 'Your session expired. Please sign in again.' : 'Access denied.');
     throw new Error('forbidden');
   }
   const j = await res.json().catch(() => ({}));
@@ -34,7 +52,7 @@ async function api(path, opts = {}) {
 }
 
 async function downloadCsv(path, filename) {
-  const res = await fetch(path, { headers: { 'X-HR-Key': hrKey } });
+  const res = await fetch(path, { headers: authHeaders() });
   if (!res.ok) { toast('Export failed'); return; }
   const blob = await res.blob();
   const a = document.createElement('a');
@@ -69,36 +87,142 @@ function showView(v) {
   else if (v === 'cycles') renderCyclesView();
   else if (v === 'settings') renderSettings();
   else if (v === 'director') renderDirector();
+  else if (v === 'users') renderUsers();
 }
 
-/* ================= key gate ================= */
+/* ================= named user management (Director only) ================= */
+async function renderUsers() {
+  let data;
+  try { data = await api('/api/admin/users'); } catch (e) { if (e.message !== 'forbidden') toast(e.message); return; }
+  const rows = data.users.map(u => `
+    <tr>
+      <td><b>${esc(u.name)}</b><div class="muted">@${esc(u.username)}</div></td>
+      <td><span class="badge ${u.role === 'admin' ? 'band' : 'neutral'}">${u.role === 'admin' ? 'Director' : 'HR'}</span></td>
+      <td><span class="badge ${u.status === 'active' ? 'validated' : 'neutral'}">${u.status}</span></td>
+      <td class="muted">${u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'never'}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn ghost small" data-edit="${esc(u.username)}">Edit / reset</button>
+        <button class="iconbtn danger" data-udel="${esc(u.username)}" title="Delete user">✕</button>
+      </td>
+    </tr>`).join('') || '<tr><td colspan="5" class="empty">No named users yet. Until you add some, sign in with the shared access keys.</td></tr>';
+
+  app.innerHTML = `${navBar('settings')}
+    <div class="list-head">
+      <div><div class="kicker">Director · user management</div><h1>Users &amp; Permissions</h1>
+      <p class="sub" style="margin-bottom:0">Create individual HR and Director logins. Named sign-ins give per-person audit attribution; the shared access keys keep working as a fallback.</p></div>
+      <div class="actions"><button class="btn small" id="addUser">+ Add user</button>
+        <button class="btn ghost small" id="backSettings">Back to settings</button></div>
+    </div>
+    <div id="userForm"></div>
+    <div class="card" style="overflow-x:auto">
+      <table class="list">
+        <thead><tr><th>User</th><th>Role</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div class="error-msg" id="uErr" hidden></div>`;
+  bindNav();
+  document.getElementById('backSettings').onclick = () => showView('settings');
+  const showErr = m => { const e = document.getElementById('uErr'); e.hidden = false; e.textContent = m; };
+
+  const openForm = (u) => {
+    document.getElementById('userForm').innerHTML = `
+      <div class="card" style="background:var(--bg)">
+        <h3 style="margin-bottom:10px">${u ? 'Edit ' + esc(u.name) : 'New user'}</h3>
+        <div class="grid2">
+          <div><label>Full name *</label><input id="uName" value="${u ? esc(u.name) : ''}"></div>
+          <div><label>Username *</label><input id="uUser" value="${u ? esc(u.username) : ''}" ${u ? 'disabled' : ''} placeholder="e.g. priya.hr"></div>
+          <div><label>Role *</label><select id="uRole">
+            <option value="hr" ${u && u.role === 'hr' ? 'selected' : ''}>HR</option>
+            <option value="admin" ${u && u.role === 'admin' ? 'selected' : ''}>Director</option></select></div>
+          <div><label>Status</label><select id="uStatus">
+            <option value="active" ${!u || u.status === 'active' ? 'selected' : ''}>Active</option>
+            <option value="inactive" ${u && u.status === 'inactive' ? 'selected' : ''}>Inactive</option></select></div>
+          <div class="full"><label>${u ? 'New password (leave blank to keep current)' : 'Password * (min 8 chars)'}</label><input type="password" id="uPass" autocomplete="new-password"></div>
+        </div>
+        <div class="actions mt"><button class="btn small" id="uSave">${u ? 'Save changes' : 'Create user'}</button>
+          <button class="btn ghost small" id="uCancel">Cancel</button></div>
+      </div>`;
+    document.getElementById('uCancel').onclick = () => { document.getElementById('userForm').innerHTML = ''; };
+    document.getElementById('uSave').onclick = async () => {
+      try {
+        await api('/api/admin/users', { method: 'POST', body: JSON.stringify({
+          username: u ? u.username : document.getElementById('uUser').value,
+          name: document.getElementById('uName').value, role: document.getElementById('uRole').value,
+          status: document.getElementById('uStatus').value, password: document.getElementById('uPass').value || undefined }) });
+        toast('User saved.'); renderUsers();
+      } catch (e) { if (e.message !== 'forbidden') showErr(e.message); }
+    };
+  };
+  document.getElementById('addUser').onclick = () => openForm(null);
+  app.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openForm(data.users.find(x => x.username === b.dataset.edit)));
+  app.querySelectorAll('[data-udel]').forEach(b => b.onclick = async () => {
+    if (b.dataset.udel === (AUTH && AUTH.username)) return toast("You can't delete the account you're signed in with.");
+    if (!confirm(`Delete user @${b.dataset.udel}? They will no longer be able to sign in.`)) return;
+    await api('/api/admin/users/' + encodeURIComponent(b.dataset.udel), { method: 'DELETE' });
+    toast('User deleted.'); renderUsers();
+  });
+}
+
+/* ================= sign-in (named user OR access key) ================= */
 function renderLogin(msg) {
   app.innerHTML = `
     <div class="card login-card">
-      <h2>HR Access</h2>
-      <p class="muted" style="margin-bottom:14px">Enter the HR access key. It is printed in the server console when the portal starts (also in <code>data/config.json</code>).</p>
-      <label for="keyIn">Access key</label>
-      <input type="password" id="keyIn" autocomplete="off">
-      <label class="agree-row"><input type="checkbox" id="rememberKey"> Remember on this device</label>
-      ${msg ? `<div class="error-msg">${esc(msg)}</div>` : ''}
-      <div class="actions mt"><button class="btn" id="go">Open Dashboard</button></div>
+      <div class="login-brand"><span class="wm"><span class="wm-red">SC</span><span class="wm-dark">ORA</span></span>
+        <div class="muted" style="font-size:12px;letter-spacing:1.5px;text-transform:uppercase">HR &amp; Director Console</div></div>
+      <div id="loginForms">
+        <label for="uIn">Username</label>
+        <input type="text" id="uIn" autocomplete="username">
+        <label for="pIn" style="margin-top:10px">Password</label>
+        <input type="password" id="pIn" autocomplete="current-password">
+        <label class="agree-row"><input type="checkbox" id="remember"> Keep me signed in on this device</label>
+        ${msg ? `<div class="error-msg">${esc(msg)}</div>` : ''}
+        <div class="actions mt"><button class="btn" id="goUser">Sign in</button></div>
+        <p class="muted mt" style="text-align:center"><a href="#" id="toKey">Use an access key instead</a></p>
+      </div>
+      <div id="keyForm" hidden>
+        <label for="keyIn">Access key (HR or Director)</label>
+        <input type="password" id="keyIn" autocomplete="off">
+        <label class="agree-row"><input type="checkbox" id="rememberKey"> Keep me signed in on this device</label>
+        <div class="error-msg" id="keyErr" hidden></div>
+        <div class="actions mt"><button class="btn" id="goKey">Open dashboard</button></div>
+        <p class="muted mt" style="text-align:center"><a href="#" id="toUser">Back to username sign-in</a></p>
+      </div>
     </div>`;
-  const tryKey = async () => {
-    hrKey = document.getElementById('keyIn').value.trim();
-    if (!hrKey) return;
+
+  const loginUser = async () => {
+    const username = document.getElementById('uIn').value.trim();
+    const password = document.getElementById('pIn').value;
+    if (!username || !password) return renderLogin('Enter your username and password.');
+    try {
+      const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || 'Sign-in failed.');
+      saveAuth({ mode: 'token', value: j.token, name: j.name, role: j.role }, document.getElementById('remember').checked);
+      showView(ROLE === 'admin' ? 'director' : 'subs');
+    } catch (e) { renderLogin(e.message); }
+  };
+  const loginKey = async () => {
+    const key = document.getElementById('keyIn').value.trim();
+    if (!key) return;
+    const remember = document.getElementById('rememberKey').checked;
+    saveAuth({ mode: 'key', value: key, name: '', role: 'hr' }, remember);
     try {
       const who = await api('/api/hr/whoami');
-      ROLE = who.role;
-      (document.getElementById('rememberKey').checked ? localStorage : sessionStorage).setItem(KEY_STORE, hrKey);
+      saveAuth({ mode: 'key', value: key, name: who.name, role: who.role }, remember);
       showView(ROLE === 'admin' ? 'director' : 'subs');
-    } catch (e) {
-      if (e.message !== 'forbidden') renderLogin(e.message);
-    }
+    } catch (e) { if (e.message !== 'forbidden') { clearAuth(); const el = document.getElementById('keyErr'); if (el) { el.hidden = false; el.textContent = e.message; } } }
   };
-  document.getElementById('go').onclick = tryKey;
-  document.getElementById('keyIn').addEventListener('keydown', e => { if (e.key === 'Enter') tryKey(); });
-  document.getElementById('keyIn').focus();
+  document.getElementById('goUser').onclick = loginUser;
+  document.getElementById('pIn').addEventListener('keydown', e => { if (e.key === 'Enter') loginUser(); });
+  document.getElementById('goKey').onclick = loginKey;
+  document.getElementById('keyIn').addEventListener('keydown', e => { if (e.key === 'Enter') loginKey(); });
+  document.getElementById('toKey').onclick = e => { e.preventDefault(); document.getElementById('loginForms').hidden = true; document.getElementById('keyForm').hidden = false; document.getElementById('keyIn').focus(); };
+  document.getElementById('toUser').onclick = e => { e.preventDefault(); document.getElementById('keyForm').hidden = true; document.getElementById('loginForms').hidden = false; };
+  document.getElementById('uIn').focus();
 }
+
+function lock() { clearAuth(); renderLogin(); }
 
 /* ================= main list ================= */
 async function renderList() {
@@ -222,19 +346,22 @@ function renderCyclesView() {
 }
 
 async function renderSettings() {
+  const who = AUTH && AUTH.name ? `Signed in as <b>${esc(AUTH.name)}</b>${AUTH.mode === 'key' ? ' (access key)' : ''} · ` : '';
   app.innerHTML = `${navBar('settings')}
     <div class="list-head">
       <div><h1>Settings</h1>
-      <p class="sub" style="margin-bottom:0">Scoring weights, audit trail and session.</p></div>
+      <p class="sub" style="margin-bottom:0">${who}Scoring weights, audit trail and session.</p></div>
       <div class="actions">
+        ${ROLE === 'admin' ? '<button class="btn small" id="usersBtn">Manage users</button>' : ''}
         <a class="btn secondary small" href="/admin">Assessment designer</a>
-        <button class="btn ghost small" id="lockBtn" title="Forget the key on this device">Lock dashboard</button>
+        <button class="btn ghost small" id="lockBtn" title="Sign out on this device">Sign out</button>
       </div>
     </div>
     <div id="panel"></div>
     <div id="panel2"></div>`;
   bindNav();
-  document.getElementById('lockBtn').onclick = () => { sessionStorage.removeItem(KEY_STORE); localStorage.removeItem(KEY_STORE); hrKey = ''; renderLogin(); };
+  document.getElementById('lockBtn').onclick = lock;
+  if (ROLE === 'admin') document.getElementById('usersBtn').onclick = () => showView('users');
   await renderWeightsPanel();
   const events = await api('/api/hr/audit').catch(() => []);
   const rows = events.map(e => `
@@ -517,13 +644,15 @@ async function renderEmployeesPanel() {
   document.getElementById('panel').innerHTML = `
     <div class="card mt">
       <h2>Employee directory <span class="muted" style="font-weight:400;font-size:13px">· ${data.employees.length} employees · ${data.departments.length} departments · ${data.designations.length} designations</span></h2>
-      <p class="muted" style="margin-bottom:12px">When the directory has employees, <b>only registered, active employees</b> can take assessments, and their identity fields come from the directory. Email addresses enable notifications. Bulk import: Excel/CSV with columns Employee ID, Name, Email, Department, Designation, Manager, Location, DOJ, Status.</p>
+      <p class="muted" style="margin-bottom:12px">When the directory has employees, <b>only registered, active employees</b> can take assessments, and their identity fields come from the directory. Bulk import: Excel/CSV with columns Employee ID, Name, Email, Department, Designation, Manager, Location, DOJ, Status. The <b>Manager</b> column (employee ID or name of the manager) builds the reporting hierarchy below.</p>
       <div class="actions" style="margin-bottom:10px">
         <button class="btn small" id="empAddBtn">+ Add employee</button>
         <button class="btn secondary small" id="empImportBtn">Bulk import (Excel/CSV)</button>
+        <button class="btn ghost small" id="empTreeBtn">View reporting hierarchy</button>
         <input type="file" id="empFile" accept=".xlsx,.xls,.csv" hidden>
       </div>
       <div id="empForm"></div>
+      <div id="empTree"></div>
       <div style="overflow-x:auto"><table class="list">
         <thead><tr><th>Employee</th><th>Department</th><th>Manager</th><th>Location</th><th>Status</th><th></th></tr></thead>
         <tbody>${rows}</tbody></table></div>
@@ -532,6 +661,35 @@ async function renderEmployeesPanel() {
 
   const panel = document.getElementById('panel');
   const showErr = m => { const e = document.getElementById('empErr'); e.hidden = false; e.textContent = m; };
+
+  // reporting-manager hierarchy (org tree) built from each employee's Manager field
+  document.getElementById('empTreeBtn').onclick = () => {
+    const box = document.getElementById('empTree');
+    if (box.innerHTML) { box.innerHTML = ''; return; }
+    const byId = {}, byName = {};
+    data.employees.forEach(e => { byId[e.employeeId.toLowerCase()] = e; if (e.name) byName[e.name.toLowerCase()] = e; });
+    const childrenOf = {};
+    const roots = [];
+    data.employees.forEach(e => {
+      const m = String(e.manager || '').trim().toLowerCase();
+      const parent = m && (byId[m] || byName[m]);
+      if (parent && parent.employeeId !== e.employeeId) (childrenOf[parent.employeeId] = childrenOf[parent.employeeId] || []).push(e);
+      else roots.push(e);
+    });
+    const seen = new Set();
+    const node = e => {
+      if (seen.has(e.employeeId)) return '';
+      seen.add(e.employeeId);
+      const kids = (childrenOf[e.employeeId] || []).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      return `<li><div class="tree-node"><b>${esc(e.name)}</b> <span class="muted">${esc(e.designation || '')}${e.department ? ' · ' + esc(e.department) : ''}</span></div>
+        ${kids.length ? `<ul>${kids.map(node).join('')}</ul>` : ''}</li>`;
+    };
+    box.innerHTML = data.employees.length
+      ? `<div class="card" style="background:var(--bg)"><h3 style="margin-bottom:10px">Reporting hierarchy</h3>
+         <ul class="org-tree">${roots.sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(node).join('')}</ul>
+         <p class="muted mt">Top level = employees with no manager listed (or a manager not in the directory).</p></div>`
+      : '<div class="card" style="background:var(--bg)"><div class="empty">Add employees with a Manager value to see the hierarchy.</div></div>';
+  };
 
   document.getElementById('empAddBtn').onclick = () => {
     document.getElementById('empForm').innerHTML = `
@@ -567,7 +725,7 @@ async function renderEmployeesPanel() {
     const file = e.target.files[0]; e.target.value = '';
     if (!file) return;
     try {
-      const res = await fetch('/api/hr/employees/import', { method: 'POST', headers: { 'X-HR-Key': hrKey, 'Content-Type': 'application/octet-stream' }, body: await file.arrayBuffer() });
+      const res = await fetch('/api/hr/employees/import', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/octet-stream' }, body: await file.arrayBuffer() });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || 'Import failed');
       toast(`Imported ${j.imported} employee(s)${j.skipped ? ', skipped ' + j.skipped : ''}.`);
@@ -1020,8 +1178,8 @@ async function renderDetail(id) {
   window.scrollTo(0, 0);
 }
 
-if (hrKey) {
+if (AUTH) {
   api('/api/hr/whoami')
-    .then(who => { ROLE = who.role; showView(ROLE === 'admin' ? 'director' : 'subs'); })
-    .catch(() => {});
+    .then(who => { ROLE = who.role; if (AUTH) { AUTH.role = who.role; AUTH.name = who.name; } showView(ROLE === 'admin' ? 'director' : 'subs'); })
+    .catch(() => {});  // api() handles a dead credential by showing the login
 } else renderLogin();

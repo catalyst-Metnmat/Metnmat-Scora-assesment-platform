@@ -4,12 +4,17 @@
  * The "Access & security" tab (key management) is Director-only.
  * Edits a working copy in memory; "Save changes" PUTs the whole framework. */
 const app = document.getElementById('app');
-const KEY_STORE = 'metnmat-admin-key';
-let adminKey = sessionStorage.getItem(KEY_STORE) || localStorage.getItem(KEY_STORE) || '';
-let ROLE = 'hr';      // 'admin' (director) or 'hr' — set after login
+const AUTH_STORE = 'scora-auth';   // shared with the HR/Director dashboard
+let AUTH = loadAuth();
+let ROLE = AUTH ? AUTH.role : 'hr';   // 'admin' (director) or 'hr'
 let FW = null;        // working copy
 let tab = 'skills';
 let dirty = false;
+
+function loadAuth() { try { return JSON.parse(sessionStorage.getItem(AUTH_STORE) || localStorage.getItem(AUTH_STORE) || 'null'); } catch { return null; } }
+function saveAuth(a, remember) { AUTH = a; ROLE = a.role; (remember ? localStorage : sessionStorage).setItem(AUTH_STORE, JSON.stringify(a)); }
+function clearAuth() { AUTH = null; sessionStorage.removeItem(AUTH_STORE); localStorage.removeItem(AUTH_STORE); }
+function authHeaders() { if (!AUTH) return {}; return AUTH.mode === 'token' ? { Authorization: 'Bearer ' + AUTH.value } : { 'X-Admin-Key': AUTH.value }; }
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const uid = () => 's' + Math.random().toString(36).slice(2, 10);
@@ -22,40 +27,67 @@ function toast(msg) {
 function markDirty() { dirty = true; const b = document.getElementById('saveBtn'); if (b) { b.disabled = false; b.textContent = 'Save changes'; } }
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey, ...(opts.headers || {}) } });
-  if (res.status === 403) { sessionStorage.removeItem(KEY_STORE); localStorage.removeItem(KEY_STORE); adminKey = ''; renderLogin('Invalid admin key.'); throw new Error('forbidden'); }
+  const res = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', ...authHeaders(), ...(opts.headers || {}) } });
+  if (res.status === 401 || res.status === 403) { clearAuth(); renderLogin(res.status === 401 ? 'Your session expired. Please sign in again.' : 'Access denied.'); throw new Error('forbidden'); }
   const j = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(j.error || `Request failed (${res.status})`);
   return j;
 }
 
-/* ===================== login ===================== */
+/* ===================== sign-in (named user OR access key) ===================== */
 function renderLogin(msg) {
   app.innerHTML = `
     <div class="card login-card">
-      <h2>Assessment Designer</h2>
-      <p class="muted" style="margin-bottom:14px">Enter the <b>HR key</b> to design and manage the assessment (categories, skills, scale, bands, import/export). Company <b>Directors</b> can use their key for full oversight including key management.</p>
-      <label for="keyIn">HR or Director key</label>
-      <input type="password" id="keyIn" autocomplete="off">
-      <label class="agree-row"><input type="checkbox" id="remember"> Remember on this device</label>
-      ${msg ? `<div class="error-msg">${esc(msg)}</div>` : ''}
-      <div class="actions mt"><button class="btn" id="go">Open Designer</button></div>
+      <div class="login-brand"><span class="wm"><span class="wm-red">SC</span><span class="wm-dark">ORA</span></span>
+        <div class="muted" style="font-size:12px;letter-spacing:1.5px;text-transform:uppercase">Assessment Designer</div></div>
+      <div id="loginForms">
+        <label for="uIn">Username</label>
+        <input type="text" id="uIn" autocomplete="username">
+        <label for="pIn" style="margin-top:10px">Password</label>
+        <input type="password" id="pIn" autocomplete="current-password">
+        <label class="agree-row"><input type="checkbox" id="remember"> Keep me signed in on this device</label>
+        ${msg ? `<div class="error-msg">${esc(msg)}</div>` : ''}
+        <div class="actions mt"><button class="btn" id="goUser">Sign in</button></div>
+        <p class="muted mt" style="text-align:center"><a href="#" id="toKey">Use an access key instead</a></p>
+      </div>
+      <div id="keyForm" hidden>
+        <label for="keyIn">HR or Director access key</label>
+        <input type="password" id="keyIn" autocomplete="off">
+        <label class="agree-row"><input type="checkbox" id="rememberKey"> Keep me signed in on this device</label>
+        <div class="error-msg" id="keyErr" hidden></div>
+        <div class="actions mt"><button class="btn" id="goKey">Open Designer</button></div>
+        <p class="muted mt" style="text-align:center"><a href="#" id="toUser">Back to username sign-in</a></p>
+      </div>
     </div>`;
-  const tryKey = async () => {
-    adminKey = document.getElementById('keyIn').value.trim();
-    if (!adminKey) return;
+  const loginUser = async () => {
+    const username = document.getElementById('uIn').value.trim(), password = document.getElementById('pIn').value;
+    if (!username || !password) return renderLogin('Enter your username and password.');
+    try {
+      const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || 'Sign-in failed.');
+      saveAuth({ mode: 'token', value: j.token, name: j.name, role: j.role }, document.getElementById('remember').checked);
+      FW = await api('/api/admin/framework'); dirty = false; render();
+    } catch (e) { renderLogin(e.message); }
+  };
+  const loginKey = async () => {
+    const key = document.getElementById('keyIn').value.trim();
+    if (!key) return;
+    const remember = document.getElementById('rememberKey').checked;
+    saveAuth({ mode: 'key', value: key, name: '', role: 'hr' }, remember);
     try {
       const who = await api('/api/hr/whoami');
-      ROLE = who.role;
-      FW = await api('/api/admin/framework');
-      (document.getElementById('remember').checked ? localStorage : sessionStorage).setItem(KEY_STORE, adminKey);
-      dirty = false; render();
-    }
-    catch (e) { if (e.message !== 'forbidden') renderLogin(e.message); }
+      saveAuth({ mode: 'key', value: key, name: who.name, role: who.role }, remember);
+      FW = await api('/api/admin/framework'); dirty = false; render();
+    } catch (e) { if (e.message !== 'forbidden') { clearAuth(); const el = document.getElementById('keyErr'); if (el) { el.hidden = false; el.textContent = e.message; } } }
   };
-  document.getElementById('go').onclick = tryKey;
-  document.getElementById('keyIn').addEventListener('keydown', e => { if (e.key === 'Enter') tryKey(); });
-  document.getElementById('keyIn').focus();
+  document.getElementById('goUser').onclick = loginUser;
+  document.getElementById('pIn').addEventListener('keydown', e => { if (e.key === 'Enter') loginUser(); });
+  document.getElementById('goKey').onclick = loginKey;
+  document.getElementById('keyIn').addEventListener('keydown', e => { if (e.key === 'Enter') loginKey(); });
+  document.getElementById('toKey').onclick = e => { e.preventDefault(); document.getElementById('loginForms').hidden = true; document.getElementById('keyForm').hidden = false; document.getElementById('keyIn').focus(); };
+  document.getElementById('toUser').onclick = e => { e.preventDefault(); document.getElementById('keyForm').hidden = true; document.getElementById('loginForms').hidden = false; };
+  document.getElementById('uIn').focus();
 }
 
 /* ===================== shell ===================== */
@@ -82,7 +114,7 @@ function render() {
     <div id="tabbody"></div>`;
   document.getElementById('saveBtn').onclick = save;
   document.getElementById('revertBtn').onclick = async () => { if (dirty && !confirm('Discard unsaved changes?')) return; FW = await api('/api/admin/framework'); dirty = false; render(); };
-  document.getElementById('lockBtn').onclick = () => { sessionStorage.removeItem(KEY_STORE); localStorage.removeItem(KEY_STORE); adminKey = ''; renderLogin(); };
+  document.getElementById('lockBtn').onclick = () => { clearAuth(); renderLogin(); };
   document.getElementById('importBtn').onclick = () => document.getElementById('importFile').click();
   document.getElementById('importFile').addEventListener('change', onImportFile);
   document.getElementById('exportXlsxBtn').onclick = exportXlsx;
@@ -94,7 +126,7 @@ function render() {
 /* ===================== Excel export (all data) ===================== */
 async function exportXlsx() {
   toast('Preparing Excel export…');
-  const res = await fetch('/api/hr/export.xlsx', { headers: { 'X-Admin-Key': adminKey } });
+  const res = await fetch('/api/hr/export.xlsx', { headers: authHeaders() });
   if (!res.ok) { toast('Export failed'); return; }
   const blob = await res.blob();
   const a = document.createElement('a');
@@ -115,7 +147,7 @@ async function onImportFile(e) {
   try {
     const res = await fetch('/api/admin/import', {
       method: 'POST',
-      headers: { 'X-Admin-Key': adminKey, 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
+      headers: { ...authHeaders(), 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
       body: buf
     });
     j = await res.json();
@@ -214,10 +246,10 @@ function renderKeys(body) {
       : 'Change YOUR admin key now? Make sure you save the new key — without it you lose admin access.')) return;
     try {
       await api('/api/admin/keys', { method: 'PUT', body: JSON.stringify({ role, key }) });
-      if (role === 'admin') {
-        adminKey = key;
-        if (localStorage.getItem(KEY_STORE)) localStorage.setItem(KEY_STORE, key);
-        else sessionStorage.setItem(KEY_STORE, key);
+      // if signed in WITH the admin key (not a named token), keep this session alive on the new key
+      if (role === 'admin' && AUTH && AUTH.mode === 'key') {
+        const remember = !!localStorage.getItem(AUTH_STORE);
+        saveAuth({ ...AUTH, value: key }, remember);
       }
       result.innerHTML = `
         <div class="mt" style="background:var(--copper-pale);border:1px dashed var(--copper);border-radius:10px;padding:12px 14px">
@@ -455,8 +487,8 @@ async function save() {
 
 window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
 
-if (adminKey) {
+if (AUTH) {
   Promise.all([api('/api/hr/whoami'), api('/api/admin/framework')])
-    .then(([who, fw]) => { ROLE = who.role; FW = fw; render(); })
+    .then(([who, fw]) => { ROLE = who.role; if (AUTH) { AUTH.role = who.role; AUTH.name = who.name; } FW = fw; render(); })
     .catch(e => { if (e.message !== 'forbidden') renderLogin(e.message); });
 } else renderLogin();

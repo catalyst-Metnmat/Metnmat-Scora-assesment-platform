@@ -1,6 +1,8 @@
-# METNMAT Skill & Competency Assessment Portal
+# SCORA — Skill & Competency Assessment Portal (by METNMAT Innovations)
 
-Production portal for the METNMAT Innovations Pvt. Ltd. proficiency-based compensation and promotion framework. Built from `METNMAT_Skill_Assessment.xlsx` — 16 categories (A–P), 227 skills, 0–5 proficiency scale, HR validation, configurable weights, and 5 career bands. Designed for **annual use**, with a full **Admin designer** to change any category/skill/scale/band, a database backend that survives free cloud hosting, and one-click free deployment.
+**SCORA** is the production assessment & evaluation portal for the METNMAT Innovations Pvt. Ltd. proficiency-based compensation and promotion framework.
+
+**Sign-in:** named user accounts (username + password, JWT sessions) created by a Director under Settings → Manage users, OR the shared `ADMIN_KEY` (Director) / `HR_KEY` (HR) as a bootstrap/fallback. The Director can reset HR's key and rotate their own from the designer's Access & security tab. Built from `METNMAT_Skill_Assessment.xlsx` — 16 categories (A–P), 227 skills, 0–5 proficiency scale, HR validation, configurable weights, and 5 career bands. Designed for **annual use**, with a full **Admin designer** to change any category/skill/scale/band, a database backend that survives free cloud hosting, and one-click free deployment.
 
 ---
 

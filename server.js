@@ -220,38 +220,88 @@ app.use(express.static(path.join(__dirname, 'public'), {
 // gate API routes until storage is ready (with automatic reconnection attempts)
 app.use('/api', (req, res, next) => ensureReady().then(() => next()).catch(() => res.status(503).json({ error: 'Storage unavailable — database connection failed. Check MongoDB Atlas Network Access.' })));
 
-const audit = (event, req, detail) => store.appendAudit({ ts: new Date().toISOString(), event, ip: req.ip, ...detail });
+const audit = (event, req, detail = {}) => store.appendAudit({
+  ts: new Date().toISOString(), event, ip: req.ip,
+  by: (req.identity && req.identity.label) || detail.by, ...detail
+});
 
-// ---------------------------------------------------------------- auth (timing-safe + lockout)
+// ---------------------------------------------------------------- auth (named users + shared keys)
 const authFails = new Map();
-const lastLoginAudit = new Map(); // ip+role -> ts, so logins are logged without flooding the audit trail
+const lastLoginAudit = new Map(); // ip+actor -> ts, so logins are logged without flooding the audit trail
 const LOCK_AFTER = 8, LOCK_MS = 15 * 60 * 1000;
 const keyEq = (a, b) => { const x = Buffer.from(a || ''), y = Buffer.from(b || ''); return x.length === y.length && crypto.timingSafeEqual(x, y); };
+const b64url = s => Buffer.from(s).toString('base64url');
+
+// minimal HS256 JWT (no external dependency)
+async function signToken(payload) {
+  const { authSecret } = await store.getSecrets();
+  const head = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const body = b64url(JSON.stringify(payload));
+  const data = head + '.' + body;
+  const sig = crypto.createHmac('sha256', authSecret).update(data).digest('base64url');
+  return data + '.' + sig;
+}
+async function verifyToken(token) {
+  try {
+    const [h, b, s] = String(token).split('.');
+    if (!h || !b || !s) return null;
+    const { authSecret } = await store.getSecrets();
+    const expected = crypto.createHmac('sha256', authSecret).update(h + '.' + b).digest('base64url');
+    const a = Buffer.from(s), e = Buffer.from(expected);
+    if (a.length !== e.length || !crypto.timingSafeEqual(a, e)) return null;
+    const payload = JSON.parse(Buffer.from(b, 'base64url').toString());
+    if (payload.exp && Date.now() > payload.exp) return null;
+    return payload;
+  } catch { return null; }
+}
+
+const hashPw = pw => { const salt = crypto.randomBytes(16); return salt.toString('hex') + ':' + crypto.scryptSync(String(pw), salt, 32).toString('hex'); };
+const verifyPw = (pw, stored) => {
+  try { const [s, k] = String(stored).split(':'); const dk = crypto.scryptSync(String(pw), Buffer.from(s, 'hex'), 32); const kb = Buffer.from(k, 'hex'); return dk.length === kb.length && crypto.timingSafeEqual(dk, kb); }
+  catch { return false; }
+};
+
+// Resolve who is calling: a named-user bearer token, or a shared role key.
+async function resolveIdentity(req) {
+  const authz = String(req.headers['authorization'] || '');
+  if (authz.startsWith('Bearer ')) {
+    const p = await verifyToken(authz.slice(7));
+    if (p && p.role && p.username) {
+      const u = await store.getUser(p.username);
+      if (u && u.status !== 'inactive') return { kind: 'user', role: p.role, username: p.username, name: p.name, label: `${p.name} (@${p.username})` };
+    }
+    return null; // a present-but-invalid token never falls through to a key
+  }
+  const { adminKey, hrKey } = await store.getSecrets();
+  const provided = String(req.headers['x-admin-key'] || req.headers['x-hr-key'] || '');
+  if (provided && keyEq(provided, adminKey)) return { kind: 'key', role: 'admin', label: 'Director key' };
+  if (provided && keyEq(provided, hrKey)) return { kind: 'key', role: 'hr', label: 'HR key' };
+  return null;
+}
 
 function makeAuth(level) {
-  // level 'hr' accepts hr OR admin key; level 'admin' accepts admin only
+  // level 'hr' accepts hr OR admin; level 'admin' accepts admin (Director) only
   return async (req, res, next) => {
     const ip = req.ip;
     const rec = authFails.get(ip);
     if (rec && rec.until > Date.now()) return res.status(429).json({ error: 'Too many failed attempts. Try again in a few minutes.' });
-    const { adminKey, hrKey } = await store.getSecrets();
-    const provided = String(req.headers['x-admin-key'] || req.headers['x-hr-key'] || '');
-    const isAdmin = keyEq(provided, adminKey);
-    const ok = level === 'admin' ? isAdmin : (isAdmin || keyEq(provided, hrKey));
-    if (!ok) {
+    const identity = await resolveIdentity(req);
+    if (!identity) {
       const r = rec && rec.until <= Date.now() ? { count: 0, until: 0 } : (rec || { count: 0, until: 0 });
       r.count++;
       if (r.count >= LOCK_AFTER) { r.until = Date.now() + LOCK_MS; r.count = 0; audit('auth.lockout', req, {}); }
       authFails.set(ip, r);
-      return res.status(403).json({ error: 'Invalid access key' });
+      return res.status(401).json({ error: 'Sign in required.' });
     }
+    req.identity = identity;
+    req.isAdmin = identity.role === 'admin';
+    if (level === 'admin' && !req.isAdmin) return res.status(403).json({ error: 'Director access required.' });
     authFails.delete(ip);
-    req.isAdmin = isAdmin;
-    // audit login activity (one entry per ip+role per 6h, not per request)
-    const lk = ip + ':' + (isAdmin ? 'director' : 'hr');
+    // audit login activity (one entry per actor per 6h, not per request)
+    const lk = ip + ':' + identity.label;
     if (Date.now() - (lastLoginAudit.get(lk) || 0) > 6 * 3600e3) {
       lastLoginAudit.set(lk, Date.now());
-      audit('auth.login', req, { role: isAdmin ? 'director' : 'hr' });
+      audit('auth.session', req, { role: identity.role });
     }
     next();
   };
@@ -272,6 +322,29 @@ const wrap = fn => (req, res) => fn(req, res).catch(err => {
   console.error(new Date().toISOString(), err);
   if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
 });
+
+// named-user login → bearer token
+app.post('/api/auth/login', wrap(async (req, res) => {
+  const ip = req.ip;
+  const rec = authFails.get(ip);
+  if (rec && rec.until > Date.now()) return res.status(429).json({ error: 'Too many failed attempts. Try again in a few minutes.' });
+  const username = String((req.body || {}).username || '').trim().toLowerCase();
+  const password = String((req.body || {}).password || '');
+  const u = username ? await store.getUser(username) : null;
+  if (!u || u.status === 'inactive' || !verifyPw(password, u.passwordHash)) {
+    const r = rec && rec.until <= Date.now() ? { count: 0, until: 0 } : (rec || { count: 0, until: 0 });
+    r.count++;
+    if (r.count >= LOCK_AFTER) { r.until = Date.now() + LOCK_MS; r.count = 0; }
+    authFails.set(ip, r);
+    return res.status(403).json({ error: 'Invalid username or password.' });
+  }
+  authFails.delete(ip);
+  const token = await signToken({ username: u.username, name: u.name, role: u.role, exp: Date.now() + 12 * 3600e3 });
+  u.lastLoginAt = new Date().toISOString();
+  await store.upsertUser(u);
+  audit('auth.login', req, { by: `${u.name} (@${u.username})`, role: u.role });
+  res.json({ ok: true, token, name: u.name, role: u.role, username: u.username });
+}));
 
 // ---------------------------------------------------------------- public API
 app.get('/api/skills', wrap(async (_req, res) => {
@@ -522,7 +595,12 @@ app.post('/api/me', submitLimit, wrap(async (req, res) => {
 const hr = express.Router();
 hr.use(hrAuth);
 
-hr.get('/whoami', (req, res) => res.json({ role: req.isAdmin ? 'admin' : 'hr' }));
+hr.get('/whoami', (req, res) => res.json({
+  role: req.isAdmin ? 'admin' : 'hr',
+  name: req.identity.kind === 'user' ? req.identity.name : (req.isAdmin ? 'Director' : 'HR'),
+  username: req.identity.username || null,
+  kind: req.identity.kind
+}));
 
 hr.get('/cycles', wrap(async (_req, res) => res.json(await store.listCycles())));
 
@@ -1182,6 +1260,45 @@ admin.put('/framework', hrAuth, wrap(async (req, res) => {
   await store.saveFramework(fw);
   audit('framework.updated', req, { domains: fw.domains.length, skills: allSkills(fw).length, by: req.isAdmin ? 'director' : 'hr' });
   res.json({ ok: true, framework: fw });
+}));
+
+// ---- named user management (Director only) ----
+const USERNAME_RE = /^[a-z0-9._-]{3,32}$/;
+admin.get('/users', adminAuth, wrap(async (_req, res) => {
+  const users = (await store.listUsers()).map(({ passwordHash, ...u }) => u).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  res.json({ users });
+}));
+admin.post('/users', adminAuth, wrap(async (req, res) => {
+  const { username: rawU, name, role, password } = req.body || {};
+  const username = String(rawU || '').trim().toLowerCase();
+  if (!USERNAME_RE.test(username)) return res.status(400).json({ error: 'Username must be 3–32 chars: letters, numbers, dot, dash, underscore.' });
+  if (!String(name || '').trim()) return res.status(400).json({ error: 'Full name is required.' });
+  if (!['hr', 'admin'].includes(role)) return res.status(400).json({ error: 'Role must be HR or Director.' });
+  const existing = await store.getUser(username);
+  const user = {
+    username, name: String(name).trim().slice(0, 100), role,
+    status: (req.body.status === 'inactive') ? 'inactive' : 'active',
+    createdAt: existing ? existing.createdAt : new Date().toISOString(),
+    lastLoginAt: existing ? existing.lastLoginAt : null,
+    passwordHash: existing ? existing.passwordHash : null
+  };
+  if (password) {
+    if (String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+    user.passwordHash = hashPw(password);
+  } else if (!existing) {
+    return res.status(400).json({ error: 'A password is required for a new user.' });
+  }
+  await store.upsertUser(user);
+  audit('user.saved', req, { user: username, role });
+  res.json({ ok: true });
+}));
+admin.delete('/users/:username', adminAuth, wrap(async (req, res) => {
+  const username = String(req.params.username || '').toLowerCase();
+  const u = await store.getUser(username);
+  if (!u) return res.status(404).json({ error: 'User not found' });
+  await store.deleteUser(username);
+  audit('user.deleted', req, { user: username });
+  res.json({ ok: true });
 }));
 
 // key management — Director-only: rotate the director key and reset HR's key.

@@ -45,6 +45,7 @@ function fileDriver() {
   if (!Array.isArray(db.submissions)) db.submissions = [];
   if (!Array.isArray(db.drafts)) db.drafts = [];
   if (!Array.isArray(db.employees)) db.employees = [];
+  if (!Array.isArray(db.users)) db.users = [];
   if (!db.frameworkSnapshots || typeof db.frameworkSnapshots !== 'object') db.frameworkSnapshots = {};
 
   let framework = loadJson(FW_FILE, null);
@@ -65,16 +66,18 @@ function fileDriver() {
         for (const s of db.submissions) if (!s.cycleId) s.cycleId = legacy.id;
         saveDb();
       }
-      // keys: env overrides, else generate + persist
+      // keys + auth secret: env overrides, else generate + persist
       if (!config.adminKey) config.adminKey = crypto.randomBytes(12).toString('base64url');
       if (!config.hrKey) config.hrKey = crypto.randomBytes(12).toString('base64url');
+      if (!config.authSecret) config.authSecret = crypto.randomBytes(32).toString('base64url');
       saveCfg();
     },
     async getSecrets() {
       // runtime overrides (set from the Admin panel) win over env vars, which win over auto-generated
       return {
         adminKey: config.adminKeyOverride || process.env.ADMIN_KEY || config.adminKey,
-        hrKey: config.hrKeyOverride || process.env.HR_KEY || config.hrKey
+        hrKey: config.hrKeyOverride || process.env.HR_KEY || config.hrKey,
+        authSecret: process.env.JWT_SECRET || config.authSecret
       };
     },
     async saveSecrets(overrides) {
@@ -113,6 +116,11 @@ function fileDriver() {
     async getEmployee(eidNorm) { const e = db.employees.find(x => x.employeeIdNorm === eidNorm); return e ? JSON.parse(JSON.stringify(e)) : null; },
     async upsertEmployee(emp) { const i = db.employees.findIndex(x => x.employeeIdNorm === emp.employeeIdNorm); if (i >= 0) db.employees[i] = { ...db.employees[i], ...emp }; else db.employees.push(emp); saveDb(); },
     async deleteEmployee(eidNorm) { const i = db.employees.findIndex(x => x.employeeIdNorm === eidNorm); if (i >= 0) db.employees.splice(i, 1); saveDb(); },
+    // ---- named user accounts ----
+    async listUsers() { return (db.users || []).map(u => JSON.parse(JSON.stringify(u))); },
+    async getUser(username) { const u = (db.users || []).find(x => x.username === username); return u ? JSON.parse(JSON.stringify(u)) : null; },
+    async upsertUser(user) { if (!db.users) db.users = []; const i = db.users.findIndex(x => x.username === user.username); if (i >= 0) db.users[i] = { ...db.users[i], ...user }; else db.users.push(user); saveDb(); },
+    async deleteUser(username) { if (!db.users) return; const i = db.users.findIndex(x => x.username === username); if (i >= 0) db.users.splice(i, 1); saveDb(); },
     _backupTarget() { return { db, dir: DATA_DIR }; }
   };
 }
@@ -147,12 +155,14 @@ function mongoDriver(uri) {
       let changed = false;
       if (!secrets.adminKey) { secrets.adminKey = crypto.randomBytes(12).toString('base64url'); changed = true; }
       if (!secrets.hrKey) { secrets.hrKey = crypto.randomBytes(12).toString('base64url'); changed = true; }
+      if (!secrets.authSecret) { secrets.authSecret = crypto.randomBytes(32).toString('base64url'); changed = true; }
       if (changed) await meta.updateOne({ _id: 'secrets' }, { $set: { _id: 'secrets', value: secrets } }, { upsert: true });
       await (await col('submissions')).createIndex({ cycleId: 1 });
       await (await col('audit')).createIndex({ ts: -1 });
       await (await col('drafts')).createIndex({ token: 1 });
       await (await col('drafts')).createIndex({ cycleId: 1, employeeId: 1 });
       await (await col('employees')).createIndex({ employeeIdNorm: 1 }, { unique: true });
+      await (await col('users')).createIndex({ username: 1 }, { unique: true });
     },
     async getSecrets() {
       const meta = await col('meta');
@@ -160,7 +170,8 @@ function mongoDriver(uri) {
       // runtime overrides (set from the Admin panel) win over env vars, which win over auto-generated
       return {
         adminKey: s.adminKeyOverride || process.env.ADMIN_KEY || s.adminKey,
-        hrKey: s.hrKeyOverride || process.env.HR_KEY || s.hrKey
+        hrKey: s.hrKeyOverride || process.env.HR_KEY || s.hrKey,
+        authSecret: process.env.JWT_SECRET || s.authSecret
       };
     },
     async saveSecrets(overrides) {
@@ -206,6 +217,11 @@ function mongoDriver(uri) {
     async getEmployee(eidNorm) { const e = await (await col('employees')).findOne({ employeeIdNorm: eidNorm }); if (!e) return null; const { _id, ...rest } = e; return rest; },
     async upsertEmployee(emp) { await (await col('employees')).updateOne({ employeeIdNorm: emp.employeeIdNorm }, { $set: emp }, { upsert: true }); },
     async deleteEmployee(eidNorm) { await (await col('employees')).deleteOne({ employeeIdNorm: eidNorm }); },
+    // ---- named user accounts ----
+    async listUsers() { return (await (await col('users')).find({}).toArray()).map(({ _id, ...u }) => u); },
+    async getUser(username) { const u = await (await col('users')).findOne({ username }); if (!u) return null; const { _id, ...rest } = u; return rest; },
+    async upsertUser(user) { await (await col('users')).updateOne({ username: user.username }, { $set: user }, { upsert: true }); },
+    async deleteUser(username) { await (await col('users')).deleteOne({ username }); },
     _backupTarget() { return null; } // Mongo data is durable; no local file backup
   };
 }
