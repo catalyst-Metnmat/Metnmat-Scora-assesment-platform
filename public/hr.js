@@ -102,16 +102,20 @@ function showView(v) {
   else if (v === 'users') renderUsers();
 }
 
-/* ================= embedded assessment designer (both roles) ================= */
+/* ================= assessment designer (native, both roles) ================= */
 function renderDesigner() {
   app.innerHTML = `${navBar('designer')}
     <div class="list-head">
       <div><h1>Assessment Designer</h1>
       <p class="sub" style="margin-bottom:0">Build and edit the assessment — categories, skills, scale, bands, weights, and Excel/PDF import. To run it, create a cycle and target it under <b>Cycles &amp; assign</b>.</p></div>
-      <div class="actions"><a class="btn ghost small" href="/admin" target="_blank" rel="noopener">Open full screen ↗</a></div>
     </div>
-    <iframe class="designer-frame" src="/admin?embed=1" title="Assessment Designer"></iframe>`;
+    <div id="designerMount"></div>`;
   bindNav();
+  Designer.mount(document.getElementById('designerMount'), {
+    role: ROLE, toast, authHeaders,
+    onError: () => { clearAuth(); renderLogin('Your session expired. Please sign in again.'); },
+    onKeyChange: (r, key) => { if (r === 'admin' && AUTH && AUTH.mode === 'key') saveAuth({ ...AUTH, value: key }, !!localStorage.getItem(AUTH_STORE)); }
+  });
 }
 
 /* ================= named user management (Director only) ================= */
