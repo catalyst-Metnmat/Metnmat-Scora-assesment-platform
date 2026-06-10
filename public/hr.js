@@ -72,9 +72,8 @@ async function loadFramework() {
 // Cycles & assign (create/assign cycles) are available to BOTH roles.
 function navBar(active) {
   const items = [];
-  if (ROLE === 'admin') items.push(['director', 'Overview']);
-  items.push(['subs', 'Submissions'], ['dash', 'Analytics'], ['emp', 'Employees'],
-    ['cycles', 'Cycles & assign'], ['designer', 'Designer']);
+  if (ROLE === 'admin') items.push(['director', 'Overview'], ['adminstats', 'Admin']);
+  items.push(['subs', 'Submissions'], ['dash', 'Analytics'], ['emp', 'Employees'], ['cycles', 'Cycles & assign']);
   if (ROLE === 'admin') items.push(['users', 'Users']);
   items.push(['settings', 'Settings']);
   const console = ROLE === 'admin' ? 'Director Console' : 'HR Console';
@@ -96,26 +95,79 @@ function showView(v) {
   else if (v === 'dash') renderDashboard();
   else if (v === 'emp') renderEmployeesView();
   else if (v === 'cycles') renderCyclesView();
-  else if (v === 'designer') renderDesigner();
   else if (v === 'settings') renderSettings();
   else if (v === 'director') renderDirector();
   else if (v === 'users') renderUsers();
+  else if (v === 'adminstats') renderAdminStats();
 }
 
-/* ================= assessment designer (native, both roles) ================= */
-function renderDesigner() {
-  app.innerHTML = `${navBar('designer')}
+/* ================= assessment designer (opened from Cycles & assign) ================= */
+function openDesigner() {
+  app.innerHTML = `${navBar('cycles')}
     <div class="list-head">
       <div><h1>Assessment Designer</h1>
-      <p class="sub" style="margin-bottom:0">Build and edit the assessment — categories, skills, scale, bands, weights, and Excel/PDF import. To run it, create a cycle and target it under <b>Cycles &amp; assign</b>.</p></div>
+      <p class="sub" style="margin-bottom:0">Build and edit the assessment — categories, skills, scale, bands, weights, and Excel/PDF import. Create and target a cycle back in <b>Cycles &amp; assign</b>.</p></div>
+      <div class="actions"><button class="btn ghost small" id="backCycles">&larr; Back to Cycles &amp; assign</button></div>
     </div>
     <div id="designerMount"></div>`;
   bindNav();
+  document.getElementById('backCycles').onclick = () => showView('cycles');
   Designer.mount(document.getElementById('designerMount'), {
     role: ROLE, toast, authHeaders,
     onError: () => { clearAuth(); renderLogin('Your session expired. Please sign in again.'); },
     onKeyChange: (r, key) => { if (r === 'admin' && AUTH && AUTH.mode === 'key') saveAuth({ ...AUTH, value: key }, !!localStorage.getItem(AUTH_STORE)); }
   });
+}
+
+/* ================= Admin — read-only company stats (Director only) ================= */
+async function renderAdminStats() {
+  let dash;
+  try { dash = await api('/api/hr/dashboard'); } catch (e) { if (e.message !== 'forbidden') toast(e.message); return; }
+  const t = dash.totals;
+  const stat = (v, l) => `<div class="stat"><div class="v">${v}</div><div class="l">${l}</div></div>`;
+  const maxBand = Math.max(1, ...Object.values(dash.bandDist));
+  const bandRows = Object.entries(dash.bandDist).map(([n, c]) => `
+    <div class="bar-row"><span class="bar-label">${esc(n)}</span>
+      <div class="bar-track"><div class="bar-fill" style="width:${(c / maxBand) * 100}%"></div></div>
+      <span class="bar-val">${c}</span></div>`).join('') || '<div class="empty">No data yet.</div>';
+  const maxDept = Math.max(0.01, ...dash.departments.map(d => d.avg || 0));
+  const deptRows = dash.departments.map(d => `
+    <div class="bar-row"><span class="bar-label">${esc(d.name)} <span class="muted">(${d.count})</span></span>
+      <div class="bar-track"><div class="bar-fill" style="width:${((d.avg || 0) / maxDept) * 100}%"></div></div>
+      <span class="bar-val">${fmtNum(d.avg)}</span></div>`).join('') || '<div class="empty">No data yet.</div>';
+  const heat = v => v == null ? '' : `background:rgba(192,29,34,${(v / 5) * 0.8 + 0.06});color:${v >= 2.5 ? '#fff' : 'inherit'}`;
+  const domRows = dash.domainBoards.map(d => `
+    <tr><td><b>${d.code}</b> ${esc(d.name)}</td>
+      <td style="text-align:center;${heat(d.avgSelf)}">${fmtNum(d.avgSelf)}</td>
+      <td style="text-align:center;${heat(d.avgValidated)}">${fmtNum(d.avgValidated)}</td></tr>`).join('');
+  const skillRows = list => list.map(g => `<tr><td>${g.sno}. ${esc(g.name)}</td><td><b>${g.domain}</b></td><td style="text-align:right">${fmtNum(g.avg)}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">No data yet.</td></tr>';
+
+  app.innerHTML = `${navBar('adminstats')}
+    <div class="list-head">
+      <div><div class="kicker">Read-only</div><h1>Admin — Company Stats</h1>
+      <p class="sub" style="margin-bottom:0">High-level, view-only performance across all cycles. No editing here — use the other tabs to act.</p></div>
+    </div>
+    <div class="stat-grid">
+      ${stat(t.submissions, 'Submissions')}
+      ${stat(t.validated, 'Evaluated')}
+      ${stat(t.pending, 'Pending')}
+      ${stat(fmtNum(t.avgWeightedValidated), 'Avg validated score')}
+      ${stat(fmtNum(t.avgWeightedSelf), 'Avg self score')}
+      ${stat(t.departments, 'Departments')}
+    </div>
+    <div class="two-col">
+      <div class="card"><h2>Band distribution</h2>${bandRows}</div>
+      <div class="card"><h2>Department performance</h2>${deptRows}<div class="muted mt">Average weighted score per department.</div></div>
+    </div>
+    <div class="card"><h2>Domain proficiency (company)</h2>
+      <table class="list mt"><thead><tr><th>Domain</th><th style="text-align:center">Self avg</th><th style="text-align:center">Validated avg</th></tr></thead><tbody>${domRows}</tbody></table>
+    </div>
+    <div class="two-col">
+      <div class="card"><h2>Top skill gaps</h2><table class="list mt"><tbody>${skillRows(dash.gaps)}</tbody></table></div>
+      <div class="card"><h2>Top strengths</h2><table class="list mt"><tbody>${skillRows(dash.strengths.slice(0, 10))}</tbody></table></div>
+    </div>`;
+  bindNav();
+  window.scrollTo(0, 0);
 }
 
 /* ================= named user management (Director only) ================= */
@@ -365,11 +417,13 @@ function renderEmployeesView() {
 function renderCyclesView() {
   app.innerHTML = `${navBar('cycles')}
     <div class="list-head">
-      <div><h1>Cycles &amp; Windows</h1>
-      <p class="sub" style="margin-bottom:0">Schedule assessment windows, assign them to departments or employees, and manage exceptions.</p></div>
+      <div><h1>Cycles &amp; assign</h1>
+      <p class="sub" style="margin-bottom:0">Build the assessment, schedule windows, assign them to departments or employees, and manage exceptions.</p></div>
+      <div class="actions"><button class="btn secondary small" id="buildBtn">Build / edit assessment</button></div>
     </div>
     <div id="panel"></div>`;
   bindNav();
+  document.getElementById('buildBtn').onclick = openDesigner;
   api('/api/hr/cycles').then(cs => { CYCLES = cs; renderCyclesPanel(); });
 }
 
