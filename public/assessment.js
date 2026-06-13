@@ -231,6 +231,24 @@ function domainRated(d) {
   return requiredSkills(d).filter(answered).length;
 }
 
+// Unanswered required questions become 0 / default before final submit (declaration accepted).
+function fillMissingForSubmit() {
+  const patch = {};
+  for (const d of DATA.domains) {
+    for (const sk of requiredSkills(d)) {
+      if (answered(sk)) continue;
+      const type = sk.type || 'rating';
+      const base = { ...(state.ratings[sk.id] || {}) };
+      if (type === 'rating') base.self = 0;
+      else if (type === 'mcq') base.answer = 0;
+      else if (type === 'text') base.answer = 'Not provided';
+      state.ratings[sk.id] = base;
+      patch[sk.id] = base;
+    }
+  }
+  if (Object.keys(patch).length) Object.assign(pendingSave, patch);
+}
+
 function progressShell(inner) {
   const total = totalRequired();
   const rated = totalRated();
@@ -240,9 +258,10 @@ function progressShell(inner) {
     : `Domain ${DATA.domains[state.step].code} of ${DATA.domains[DATA.domains.length - 1].code}`;
   // forward-only: dots are a progress indicator, not navigation. Passed domains
   // are locked, the current one is highlighted, upcoming ones are dimmed.
+  const onReview = state.step >= DATA.domains.length;
   const dots = DATA.domains.map((d, i) => {
-    const locked = i < state.frontier;
-    const cls = i === state.step ? 'cur' : locked ? 'done locked' : 'upcoming';
+    const locked = onReview || i < state.frontier;
+    const cls = onReview ? 'done locked' : i === state.step ? 'cur' : locked ? 'done locked' : 'upcoming';
     return `<span class="ddot ${cls}" title="${esc(d.name)}${locked ? ' — locked' : ''}" aria-label="Domain ${d.code}: ${esc(d.name)}${locked ? ', locked' : i === state.step ? ', current' : ', upcoming'}">${d.code}</span>`;
   }).join('');
   return `
@@ -630,23 +649,30 @@ function renderReview() {
     </div>
     <div class="card">
       <h3>Declaration</h3>
-      <p style="font-size:14px;margin-top:6px">I confirm these ratings honestly reflect my current proficiency. I understand every rating is validated in a follow-up interview and over-claiming counts against the review.</p>
+      <p style="font-size:14px;margin-top:6px">I confirm these ratings honestly reflect my current proficiency. I understand every rating is validated in a follow-up interview and over-claiming counts against the review.${rated < total ? ' Any unanswered required questions will be recorded as <b>0 — no exposure</b> when you submit.' : ''}</p>
       <label class="agree-row"><input type="checkbox" id="agree"> I agree</label>
     </div>
     <div class="error-msg" id="err" hidden></div>
     <div class="wiz-nav forward">
-      <button class="btn" id="submit" ${rated < total ? 'disabled' : ''}>Submit Assessment</button>
+      <button class="btn" id="submit" disabled>Submit Assessment</button>
     </div>
   `);
   startCountdown();
   setSaveStatus(saveStatus);
 
-  document.getElementById('submit').onclick = async () => {
+  const agreeEl = document.getElementById('agree');
+  const submitBtn = document.getElementById('submit');
+  const syncSubmit = () => { submitBtn.disabled = !agreeEl.checked; };
+  agreeEl.addEventListener('change', syncSubmit);
+
+  submitBtn.onclick = async () => {
     const err = document.getElementById('err'); err.hidden = true;
-    if (!document.getElementById('agree').checked) { err.hidden = false; err.textContent = 'Please tick the declaration before submitting.'; return; }
-    const btn = document.getElementById('submit');
+    if (!agreeEl.checked) { err.hidden = false; err.textContent = 'Please tick the declaration before submitting.'; return; }
+    const btn = submitBtn;
     btn.disabled = true; btn.textContent = 'Submitting…';
     try {
+      fillMissingForSubmit();
+      state.frontier = DATA.domains.length;
       await flushSave(); // make sure the server draft is complete
       const res = await fetch('/api/submissions', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -671,7 +697,8 @@ function renderReview() {
       window.scrollTo(0, 0);
     } catch (e) {
       err.hidden = false; err.textContent = e.message;
-      btn.disabled = false; btn.textContent = 'Submit Assessment';
+      btn.textContent = 'Submit Assessment';
+      syncSubmit();
     }
   };
   bindDots();

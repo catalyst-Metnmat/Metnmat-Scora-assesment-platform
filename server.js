@@ -206,6 +206,29 @@ function missingRequired(fw, ratings) {
   });
 }
 
+// Final submit: unanswered required items default to 0 / placeholder once the employee accepts the declaration.
+function fillMissingForSubmit(fw, ratings) {
+  const filled = {};
+  for (const sk of allSkills(fw)) {
+    const src = ratings[sk.id];
+    if (sk.required === false) {
+      if (src) filled[sk.id] = { ...src };
+      continue;
+    }
+    const r = { ...(src || {}) };
+    const type = sk.type || 'rating';
+    if (type === 'rating') {
+      if (r.self == null || r.self === '' || isNaN(Number(r.self))) r.self = 0;
+    } else if (type === 'mcq') {
+      if (r.answer == null || r.answer === '') r.answer = 0;
+    } else if (type === 'text') {
+      if (!String(r.answer || '').trim()) r.answer = 'Not provided';
+    }
+    filled[sk.id] = r;
+  }
+  return filled;
+}
+
 const csvEsc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
 
 // ---------------------------------------------------------------- app
@@ -705,9 +728,10 @@ app.post('/api/submissions', submitLimit, wrap(async (req, res) => {
   if (!access.allowed) return res.status(423).json({ error: 'The assessment window has closed. Your progress is saved — contact HR for an exception.' });
   if (attemptExpired(cycle, draft, access.mode)) return res.status(423).json({ error: 'Your time limit for this assessment has elapsed. Your progress is saved — contact HR if you need more time.' });
   const fw = await makeFwResolver()(cycle.id);
+  const filledRatings = fillMissingForSubmit(fw, draft.ratings);
 
-  const missing = missingRequired(fw, draft.ratings);
-  if (missing.length) return res.status(400).json({ error: `${missing.length} question(s) not answered. Required questions cannot be skipped (enter 0 for no exposure on ratings).` });
+  const missing = missingRequired(fw, filledRatings);
+  if (missing.length) return res.status(400).json({ error: `${missing.length} question(s) could not be submitted. Please refresh and try again.` });
 
   const existing = await store.listSubmissions(cycle.id);
   if (existing.find(s => normalizeEmpId(s.profile.employeeId) === draft.employeeId))
@@ -715,7 +739,7 @@ app.post('/api/submissions', submitLimit, wrap(async (req, res) => {
 
   const clean = {};
   for (const sk of allSkills(fw)) {
-    const r = draft.ratings[sk.id];
+    const r = filledRatings[sk.id];
     if (!r) continue; // skipped optional question
     clean[sk.id] = {
       self: r.self == null ? null : Math.round(Number(r.self)),
